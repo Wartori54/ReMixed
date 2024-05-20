@@ -50,7 +50,8 @@ public class InjectTest {
         //
         // ilHook4.Dispose();
         
-        System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(TargetClassExtension).TypeHandle);
+        TargetClassExtension.MMGLUE_Patch();
+        DeferredMonoModPlatform.ApplyAll();
         TargetClass tClass = new(null);
         Console.WriteLine(tClass.Add());
         Console.WriteLine(tClass.Inc(false));

@@ -31,7 +31,7 @@ public partial class TargetClassExtension : Extends<TargetClass> {
     }
 
     [Inject("TAIL", true)]
-    public void SecretInc(ILPatcher.CallbackInfoRet<int> cir) {
+    private void SecretInc(ILPatcher.CallbackInfoRet<int> cir) {
         c++;
         cir.Cancel(_this.a + _this.b + this.c);
     }

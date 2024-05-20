@@ -265,11 +265,13 @@ public class MonoModPlatform : PatchPlatform {
         Console.WriteLine("Logging instructions end");
     }
     
-    public static ILHook Hook(MethodBase method, Action<PatchPlatform.Cursor> action) {
-        return new ILHook(method, ctx => {
-            MonoModPlatform mmPlat = new(ctx, method);
-            MonoModCursor cursor = new(mmPlat);
-            action(cursor);
-        });
+    public static ILHook AutoHook(MethodBase method, Action<PatchPlatform.Cursor> action) {
+        return new ILHook(method, GetManipulator(action, method));
     }
+
+    protected static ILContext.Manipulator GetManipulator(Action<PatchPlatform.Cursor> action, MethodBase method) => ctx => {
+        MonoModPlatform mmPlat = new(ctx, method);
+        MonoModCursor cursor = new(mmPlat);
+        action(cursor);
+    };
 }

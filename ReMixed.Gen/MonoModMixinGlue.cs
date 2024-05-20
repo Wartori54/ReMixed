@@ -179,16 +179,16 @@ public class MonoModMixinGlue : IIncrementalGenerator {
         sb.AppendLine($"#nullable enable"); // SG files need nullability enabled manually
         sb.AppendLine($"");
         sb.AppendLine($"public partial class {workingClass} {{");
-        sb.AppendLine($"    private static ILHook[] ctorHooks;");
-        sb.AppendLine($"    private static List<ILHook> detourHooks = new();");
+        sb.AppendLine($"    private static bool MMGLUE_Applied;");
         sb.AppendLine($"");
-        sb.AppendLine($"    static {workingClass}() {{");
+        sb.AppendLine($"    public static void MMGLUE_Patch() {{");
+        sb.AppendLine($"        if (MMGLUE_Applied) throw new InvalidOperationException(\"Attempted to apply twice an Extends<T>\");");
+        sb.AppendLine($"        MMGLUE_Applied = true;");
         sb.AppendLine($"        ConstructorInfo[] ctors = typeof({targetClass}).GetConstructors();");
-        sb.AppendLine($"        ctorHooks = new ILHook[ctors.Length];");
         sb.AppendLine($"        for (int i = 0; i < ctors.Length; i++) {{");
-        sb.AppendLine($"            ctorHooks[i] = MonoModPlatform.Hook(ctors[i], cursor => {{");
+        sb.AppendLine($"            DeferredMonoModPlatform.AutoHook(ctors[i], cursor => {{");
         sb.AppendLine($"                ILPatcher.InjectCallAt(cursor, new InjectLocation(InjectTarget.FromString(\"HEAD\"), false),");
-        sb.AppendLine($"                    typeof({workingClass}).GetMethod(nameof(ctorPatch))!);");
+        sb.AppendLine($"                    typeof({workingClass}).GetMethod(nameof(ctorPatch), BindingFlags.NonPublic | BindingFlags.Static)!);");
         sb.AppendLine($"            }});");
         sb.AppendLine($"        }}");
         foreach ((IMethodSymbol methodSymbol, IMethodSymbol hookTargetMethodSymbol) in glueSyntaxTarget.MethodSymbols) {
@@ -197,7 +197,7 @@ public class MonoModMixinGlue : IIncrementalGenerator {
                       $"        InjectAttribute {detourMethodName}_attribute = {GenerateReflectionFor(methodSymbol, glueSyntaxTarget.TypeProxy)}!.GetCustomAttribute<InjectAttribute>()!;");
             
             sb.AppendLine(
-                      $"        ILHook {detourMethodName}_detourHook = MonoModPlatform.Hook({GenerateReflectionFor(hookTargetMethodSymbol, glueSyntaxTarget.TypeProxy)}!, il => {{");
+                      $"        DeferredMonoModPlatform.AutoHook({GenerateReflectionFor(hookTargetMethodSymbol, glueSyntaxTarget.TypeProxy)}!, il => {{");
             // TODO: Shift support
             sb.AppendLine(
                       $"            ILPatcher.InjectCallAt{(hookTargetMethodSymbol.ReturnsVoid ? "" : $"<{glueSyntaxTarget.TypeProxy.ProxyType(hookTargetMethodSymbol.ReturnType)}>")}(il, new InjectLocation(InjectTarget.FromString({detourMethodName}_attribute.MethodTarget), {detourMethodName}_attribute.Cancellable, {detourMethodName}_attribute.Shift, {detourMethodName}_attribute.Index), ((Delegate){(hookTargetMethodSymbol.IsStatic ? methodSymbol.Name : detourMethodName)}).Method);");
@@ -206,13 +206,11 @@ public class MonoModMixinGlue : IIncrementalGenerator {
             sb.AppendLine(
                       $"        }});");
             sb.AppendLine(
-                      $"        detourHooks.Add({detourMethodName}_detourHook);");
-            sb.AppendLine(
                       $"");
         }
         sb.AppendLine($"    }}");
         sb.AppendLine($"");
-        sb.AppendLine($"    public static void ctorPatch(ILPatcher.CallbackInfo ci, {targetClass} instance) {{");
+        sb.AppendLine($"    private static void ctorPatch(ILPatcher.CallbackInfo ci, {targetClass} instance) {{");
         sb.AppendLine($"        ExtendManager.AddEntry(instance, new {workingClass}(instance));");
         sb.AppendLine($"    }}");
         foreach ((IMethodSymbol methodSymbol, IMethodSymbol hookTargetMethodSymbol) in glueSyntaxTarget.MethodSymbols) {
@@ -233,7 +231,7 @@ public class MonoModMixinGlue : IIncrementalGenerator {
             sb.AppendLine(
                       $"");
             sb.AppendLine(
-                      $"    public static void {detourMethodName}(ILPatcher.CallbackInfo{(hookTargetMethodSymbol.ReturnsVoid ? "" : $"Ret<{glueSyntaxTarget.TypeProxy.ProxyType(hookTargetMethodSymbol.ReturnType)}>")} ci, {targetClass} _this{argsSigStr}) {{");
+                      $"    private static void {detourMethodName}(ILPatcher.CallbackInfo{(hookTargetMethodSymbol.ReturnsVoid ? "" : $"Ret<{glueSyntaxTarget.TypeProxy.ProxyType(hookTargetMethodSymbol.ReturnType)}>")} ci, {targetClass} _this{argsSigStr}) {{");
             sb.AppendLine(
                       $"        {workingClass} target = ExtendManager.GetEntry<{workingClass}, {targetClass}>(_this, o => new {workingClass}(o));");
             sb.AppendLine(
