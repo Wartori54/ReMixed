@@ -1,12 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
-using System.Runtime.InteropServices;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using Mono.Collections.Generic;
-using MonoMod.Cil;
 using MonoMod.Utils;
 
 namespace ReMixed;
@@ -59,113 +58,270 @@ public class StackAnalysis {
             stackFrames.Add(StackFrame.Null());
         }
         Console.WriteLine($"Performing stack analysis for method {TargetMethod.FullName}");
+        Dictionary<int, CodeBlock> codeBlocks = AnalyzeCodeblocks();
+        Stack<CodeBlock> blockStack = new();
+        codeBlocks[0].Visited = true;
+        blockStack.Push(codeBlocks[0]); // 0th index has to *always* exist
+        
         stackFrames[0] = StackFrame.Empty(); // The stack always starts empty
-        StackFrame curr = stackFrames[0];
-        Dictionary<int, StackFrame> jumps = new();
-        for (int i = 0; i < methodInstructions.Count; i++) {
-            Instruction instr = methodInstructions[i];
-            OpCode op = instr.OpCode;
-            int stackRes;
-            {
-                int stPop = GetStackRes(op.StackBehaviourPop);
-                int stPush = GetStackRes(op.StackBehaviourPush);
-                if (stPop == int.MinValue) stackRes = stPop;
-                else if (stPush == int.MaxValue) stackRes = stPush;
-                else stackRes = stPush + stPop;
-            }
+        StackFrame curr; // TODO: Merge these two, redundancy
+        StackFrame? nextFrame = null;
+        CodeBlock currentBlock = null!;
+        while (blockStack.Count != 0) {
+            currentBlock = blockStack.Pop();
+            int i = currentBlock.Start;
+            nextFrame = stackFrames[i];
+            for (; i < currentBlock.End; i++) {
+                Instruction instr = methodInstructions[i];
+                OpCode op = instr.OpCode;
+                int stackRes;
+                {
+                    int stPop = GetStackRes(op.StackBehaviourPop);
+                    int stPush = GetStackRes(op.StackBehaviourPush);
+                    if (stPop == int.MinValue) stackRes = stPop;
+                    else if (stPush == int.MaxValue) stackRes = stPush;
+                    else stackRes = stPush + stPop;
+                }
+                
+                stackFrames[i] = curr = nextFrame ?? StackFrame.Empty();
+                nextFrame = null;
 
-            switch (op.FlowControl) {
-                case FlowControl.Branch:
-                    if (stackRes == int.MinValue || stackRes == int.MaxValue) {
-                        throw new InvalidOperationException();
-                    }
-
-                    if (op == OpCodes.Br || op == OpCodes.Br_S) {
-                        AddJump(i, (Instruction)methodInstructions[i].Operand, curr, stackRes, jumps);
-                        // Fast forward to the next jump-able instruction, since code after br is not reachable if nothing jumps to it
-                        i++;
-                        while (!jumps.TryGetValue(i, out _)) {
-                            i++;
+                switch (op.FlowControl) {
+                    case FlowControl.Branch:
+                        if (stackRes == int.MaxValue) {
+                            throw new InvalidOperationException();
                         }
 
-                        i--; // Move to the last dead instr, since the loop will advance one
-                    } else {
-                        throw new NotImplementedException();
-                    }
-                    
-                    break;
-                case FlowControl.Break: // No-ops
-                    stackFrames[i + 1] = curr;
-                    break;
-                case FlowControl.Call:
-                    stackFrames[i + 1] = curr = ParseCall(curr, instr, op, stackRes);
-                    break;
-                case FlowControl.Cond_Branch:
-                    if (stackRes == int.MinValue || stackRes == int.MaxValue) {
-                        throw new InvalidOperationException();
-                    }
-                    // operand is InlineBrTarget or ShortInlineBrTarget or InlineSwitch
-                    if (op.OperandType == OperandType.InlineSwitch) { // operand is Instruction[]
-                        Instruction[] switchJumps = (Instruction[])methodInstructions[i].Operand;
-                        foreach (Instruction switchJump in switchJumps) {
-                            AddJump(i, switchJump, curr, stackRes, jumps);
+                        // The codeblock has to end now, because it will get swapped
+                        if (i + 1 != currentBlock.End) throw new InvalidOperationException();
+
+                        int jmpIdx = methodInstructions.IndexOf((Instruction)methodInstructions[i].Operand);
+                        AddJump(i, jmpIdx, curr, stackRes);
+                        
+                        if (op == OpCodes.Br || op == OpCodes.Br_S) {
+                            nextFrame = curr; // Stack does not change with normal brs
+                        } else if (op == OpCodes.Leave || op == OpCodes.Leave_S) {
+                            nextFrame = StackFrame.Empty(); // Leave empties the stack
+                        } else {
+                            throw new UnreachableException();
                         }
-                    } else {
-                        AddJump(i, (Instruction)methodInstructions[i].Operand, curr, stackRes, jumps);
-                    }
-                    stackFrames[i + 1] = curr = curr.PushType(stackRes);
-                    break;
-                case FlowControl.Meta:
-                    if (op.OpCodeType == OpCodeType.Prefix) {
-                        throw new NotImplementedException();
-                    } else {
-                        throw new InvalidOperationException(
-                            $"{nameof(FlowControl.Meta)} can only be applied to {OpCodeType.Prefix}");
-                    }
-                    break;
-                case FlowControl.Next: // Most instructions fall here
-                    if (stackRes == int.MinValue || stackRes == int.MaxValue)
-                        throw new InvalidOperationException(
-                            $"Non-fixed {nameof(StackBehaviour)} can only be applied to {nameof(FlowControl.Call)} opcodes!");
-                    stackFrames[i + 1] = curr = curr.PushType(stackRes);
-                    break;
-                case FlowControl.Phi: // Unused
-                    stackFrames[i + 1] = curr;
-                    break;
-                case FlowControl.Return:
-                    if (stackRes == int.MaxValue) {
-                        throw new InvalidOperationException(
-                            $"No operation may have {nameof(FlowControl.Return)} and {nameof(StackBehaviour.Varpush)}!");
-                    }
+                        
+                        break;
+                    case FlowControl.Break: // No-ops
+                        nextFrame = curr;
+                        break;
+                    case FlowControl.Call:
+                        nextFrame = curr = ParseCall(curr, instr, op, stackRes);
+                        break;
+                    case FlowControl.Cond_Branch:
+                        if (stackRes == int.MinValue || stackRes == int.MaxValue) {
+                            throw new InvalidOperationException();
+                        }
 
-                    if (stackRes == int.MinValue) { // It has to be ret, so it pops a single value if not void
-                        if (op != OpCodes.Ret) throw new InvalidOperationException();
-                        stackFrames[i + 1] = curr = 
-                            curr.PopType(TargetMethod.ReturnType.FullName == typeof(void).FullName ? 0 : 1);
-                    } else {
-                        stackFrames[i + 1] = curr = curr.PushType(stackRes);
-                    }
-                    break;
-                case FlowControl.Throw:
-                    if (stackRes == int.MinValue || stackRes == int.MaxValue)
-                        throw new InvalidOperationException(
-                            $"No operation may have {nameof(FlowControl.Throw)} with non-fixed {nameof(StackBehaviour)}");
-                    stackFrames[i + 1] = curr = curr.PushType(stackRes);
-                    break;
-                default:
-                    throw new ArgumentOutOfRangeException();
+                        // operand is InlineBrTarget or ShortInlineBrTarget or InlineSwitch
+                        if (op.OperandType == OperandType.InlineSwitch) { // operand is Instruction[]
+                            Instruction[] switchJumps = (Instruction[])methodInstructions[i].Operand;
+                            foreach (Instruction switchJump in switchJumps) {
+                                AddJump(i, methodInstructions.IndexOf(switchJump), curr, stackRes);
+                            }
+                        } else {
+                            AddJump(i, methodInstructions.IndexOf((Instruction)methodInstructions[i].Operand), curr, stackRes);
+                        }
+
+                        nextFrame = curr = curr.PushType(stackRes);
+                        break;
+                    case FlowControl.Meta:
+                        if (op.OpCodeType == OpCodeType.Prefix) {
+                            throw new NotImplementedException();
+                        } else {
+                            throw new InvalidOperationException(
+                                $"{nameof(FlowControl.Meta)} can only be applied to {OpCodeType.Prefix}");
+                        }
+
+                        break;
+                    case FlowControl.Next: // Most instructions fall here
+                        if (stackRes == int.MinValue || stackRes == int.MaxValue)
+                            throw new InvalidOperationException(
+                                $"Non-fixed {nameof(StackBehaviour)} can only be applied to {nameof(FlowControl.Call)} opcodes!");
+                        nextFrame = curr = curr.PushType(stackRes);
+                        break;
+                    case FlowControl.Phi: // Unused
+                        nextFrame = curr;
+                        break;
+                    case FlowControl.Return:
+                        if (stackRes == int.MaxValue) {
+                            throw new InvalidOperationException(
+                                $"No operation may have {nameof(FlowControl.Return)} and {nameof(StackBehaviour.Varpush)}!");
+                        }
+
+                        if (stackRes == int.MinValue) { // It has to be a ret, so it pops a single value if not void
+                            if (op != OpCodes.Ret) throw new InvalidOperationException();
+                            nextFrame = curr =
+                                curr.PopType(TargetMethod.ReturnType.FullName == typeof(void).FullName ? 0 : 1);
+                        } else {
+                            nextFrame = curr = curr.PushType(stackRes);
+                        }
+
+                        break;
+                    case FlowControl.Throw:
+                        if (stackRes == int.MinValue || stackRes == int.MaxValue)
+                            throw new InvalidOperationException(
+                                $"No operation may have {nameof(FlowControl.Throw)} with non-fixed {nameof(StackBehaviour)}");
+                        nextFrame = curr = curr.PushType(stackRes);
+                        break;
+                    default:
+                        throw new ArgumentOutOfRangeException();
+                }
             }
-            
-            // jump stack merge handling
-            if (!jumps.TryGetValue(i+1, out StackFrame? jmpFrame)) continue;
 
-            if (!curr.Equals(jmpFrame)) { // The stack types MUST match, if it doesnt its invalid IL
-                throw new InvalidOperationException("Invalid IL detected!");
+            // Go to the next ones
+            foreach (int nextBlocks in currentBlock.Falls) {
+                CodeBlock next = codeBlocks[nextBlocks];
+                if (next.Visited) { // If visited only verify stacks
+                    if (!stackFrames[nextBlocks].Equals(nextFrame))
+                        throw new InvalidOperationException("Inconsistent stack sizes detected!");
+                    continue;
+                }
+                next.Visited = true;
+                blockStack.Push(next);
+#if DEBUG
+                if (!stackFrames[nextBlocks].IsNull()) throw new InvalidOperationException("Double visit??");
+#endif
+                stackFrames[nextBlocks] = nextFrame ?? throw new NullReferenceException("nextFrame was never assigned!");
             }
 
+            // // Edge case: last block, flush the nextFrame to after it since it does not fall anywhere else
+            // if (currentBlock.Falls.Count) {
+            //     
+            // }
         }
 
+        // Flush last nextFrame
+        stackFrames[currentBlock.End] = nextFrame!;
+
         Console.WriteLine($"Final stack frame: {stackFrames[methodInstructions.Count].stackAmount}");
+#if DEBUG
+        if (stackFrames.Any(stackFrame => stackFrame.IsNull())) {
+            throw new NullReferenceException("Found null stack frame!");
+        }
+#endif
+    }
+
+    // Dev notes:
+    // Generate a code block for every br or brc and at every index where they jump
+    // Then create relationships for cache so that walking through this is not slow
+    // Then do a DFS search visiting everything :peaceline:
+    // Bogus: ↓
+    // When analysing a code block, if it ends with a brc then just walk of, we know the
+    // stack state for the next one, and queue visits to the code block it jumps to
+    // if it ends with a br then immediately jump to that code block, if its already visited
+    // then go to the next queued block that we havent visited that we know the stack state of
+    // if there's none just stop, there's an infinite loop with dead code afterwards
+    // any unvisited blocks after analysis are dead
+    private Dictionary<int, CodeBlock> AnalyzeCodeblocks() {
+        // Turns out that control flow is also greatly more difficult with exceptions so this is not getting done now.
+        if (TargetMethod.Body.HasExceptionHandlers)
+            throw new NotImplementedException();
+        // Generate all edges
+        Dictionary<int, HashSet<int>> jumps = [];
+        for (int i = 0; i < methodInstructions.Count; i++) {
+            Instruction instr = methodInstructions[i];
+            if (instr.OpCode is { FlowControl: FlowControl.Return or FlowControl.Throw }) {
+                // `ret`s jump to the "exit codeblock"
+                jumps.Add(i, [methodInstructions.Count]);
+            } else if (instr.OpCode is { FlowControl: FlowControl.Branch or FlowControl.Cond_Branch }) {
+                if (instr.OpCode.OperandType == OperandType.InlineSwitch) {
+                    Instruction[] switchJumps = (Instruction[])instr.Operand;
+                    HashSet<int> jmpIdxx = new(switchJumps.Length + 1);
+                    jmpIdxx.Add(i + 1); // Switches also "jump" to its next instruction
+                    foreach (Instruction jmpInstr in switchJumps) {
+                        int jmpIdx = methodInstructions.IndexOf(jmpInstr);
+                        jmpIdxx.Add(jmpIdx);
+                        LinkBackToPrev(jmpIdx);
+                    }
+
+                    // This cannot be a greedy add since jumps may already exist because of the linking in `LinkBackToPrev`
+                    if (!jumps.TryGetValue(i, out HashSet<int>? instrJumps)) {
+                        instrJumps = [];
+                        jumps[i] = instrJumps;
+                    }
+                    instrJumps.UnionWith(jmpIdxx);
+                } else {
+                    int jmpIdx = methodInstructions.IndexOf((Instruction)instr.Operand);
+                    if (instr.OpCode.FlowControl == FlowControl.Cond_Branch) {
+                        // This cannot be a greedy add since jumps may already exist because of the linking in `LinkBackToPrev`
+                        if (!jumps.TryGetValue(i, out HashSet<int>? brcJumps)) {
+                            brcJumps = [];
+                            jumps[i] = brcJumps;
+                        }
+                        // Cond branches technically also "jump" to the next instruction
+                        brcJumps.UnionWith([jmpIdx, i + 1]);
+                    } else {
+                        jumps.Add(i, [jmpIdx]);
+                    }
+
+                    LinkBackToPrev(jmpIdx);
+                }
+            }
+        }
+
+        // Flatten all the block starts
+        SortedSet<int> allBreaks = [];
+        foreach ((int _, HashSet<int> jmps) in jumps) {
+            allBreaks.UnionWith(jmps);
+        }
+
+        // // Force generate the last block
+        // allBreaks.Add(methodInstructions.Count);
+
+        // Make them
+        Dictionary<int, CodeBlock> codeBlocks = [];
+        int prev = 0;
+        foreach (int split in allBreaks) {
+            if (split == 0) continue; // Jumps to the first instr don't generate codeblocks
+            CodeBlock codeBlock = new(prev, split);
+            // ALL codeblocks must jump to somewhere, thus the last instr of one (split - 1 is the last instr of the prev one)
+            // necessarily need to exist in the jump table
+            codeBlock.Falls = jumps[split - 1];
+//             if (jumps.TryGetValue(split - 1, out HashSet<int>? falls)) {
+//                 codeBlock.Falls = falls;
+//             }
+// #if DEBUG
+//             else { // All blocks except the next one strictly require that there are some jumps to somewhere
+//                 if (split != methodInstructions.Count)
+//                     throw new InvalidOperationException();
+//                 // See comment below
+//                 codeBlock.Falls = [methodInstructions.Count];
+//             }
+// #endif
+            codeBlocks.Add(prev, codeBlock);
+            prev = split;
+        }
+        
+        // Why should an empty codeblock exist outside the method? To simplify the edge case of the last codeblock
+        // where it will not fall anywhere since it's the last one, so faking an "exit" block, it can be normalized
+        // and such there's no need for edge cases in the loop
+        // Allso
+        codeBlocks.Add(methodInstructions.Count, new CodeBlock(methodInstructions.Count, methodInstructions.Count));
+
+        return codeBlocks;
+
+        // Jump locations can also be reached by its previous instruction sometimes, so an edge has to be made
+        // there as well
+        void LinkBackToPrev(int jmpIdx) {
+            // The only edge missing here is that codeblock starts also link to the previous codeblock, if it was not a br
+            if (jmpIdx == 0 || !CanFlowFallThrough(methodInstructions[jmpIdx - 1].OpCode)) return; // Edge case
+            if (!jumps.TryGetValue(jmpIdx - 1, out HashSet<int>? set)) {
+                set = [jmpIdx];
+                jumps[jmpIdx - 1] = set;
+            } else {
+                set.Add(jmpIdx);
+            }
+        }
+    }
+
+    public static bool CanFlowFallThrough(OpCode opCode) {
+        return opCode is not { FlowControl: FlowControl.Branch or FlowControl.Return or FlowControl.Throw };
     }
 
     private static StackFrame ParseCall(StackFrame curr, Instruction instr, OpCode op, int stackRes) {
@@ -204,23 +360,23 @@ public class StackAnalysis {
         return curr.PushType(realSb);
     }
 
-    private void AddJump(int i, Instruction jmp, StackFrame curr, int stackRes, Dictionary<int, StackFrame> jumps) {
-        int jmpIdx = methodInstructions.IndexOf(jmp);
+    private void AddJump(int i, int jmpIdx, StackFrame curr, int stackRes) {
         if (jmpIdx == -1) {
             throw new InvalidOperationException("Invalid jump target?");
         }
+        // TODO: Maybe dont regenerate this?
         if (!Branches.TryGetValue(jmpIdx, out List<int>? possibleJumps))
             Branches.Add(jmpIdx, [i]);
         else
             possibleJumps.Add(i);
 
-        StackFrame nStFrame = curr.PushType(stackRes);
-        if (jumps.TryAdd(jmpIdx, nStFrame)) return;
-        // Conflict: two branches jump to the same point
-        if (!jumps[jmpIdx].Equals(nStFrame)) { // They MUST have the same stack types
-            throw new InvalidOperationException("Invalid IL detected!");
-            // jumps[jmpIdx].MergeWith(nStFrame);
-        } 
+        // StackFrame nStFrame = curr.PushType(stackRes);
+        // if (jumps.TryAdd(jmpIdx, nStFrame)) return;
+        // // Conflict: two branches jump to the same point
+        // if (!jumps[jmpIdx].Equals(nStFrame)) { // They MUST have the same stack types
+        //     throw new InvalidOperationException("Inconsistent stack sizes detected!");
+        //     // jumps[jmpIdx].MergeWith(nStFrame);
+        // } 
     }
 
     public static Collection<Instruction> CopyInstructions(MethodBody bo, Func<object, MethodBody, Collection<Instruction>, object>? operandConverter) {
@@ -293,10 +449,11 @@ public class StackAnalysis {
     /// Represents a possible state of the stack at a certain point in time.
     /// </summary>
     public class StackFrame {
-        // AAAA THE STACK FRAME CANNOT BE IN A SUPERPOSITON, WHYYYY
         public readonly int stackAmount;
 
         private StackFrame(int stackAmount) {
+            if (stackAmount < 0) // TODO: Dont error here, do it at the end instead so that more info can be added
+                throw new InvalidOperationException("Stack underflow detected!");
             this.stackAmount = stackAmount;
         }
 
@@ -311,14 +468,6 @@ public class StackAnalysis {
         public StackFrame PopType(int c) {
             return new StackFrame(stackAmount - c);
         }
-
-        // public StackFrame MergeWith(StackFrame other) {
-        //     return new StackFrame(Merge(conditionalTypes, other.conditionalTypes));
-        // }
-
-        // public StackFrame PopConditional(int c) {
-        //     return new StackFrame(baseTypes, Merge(conditionalTypes, -c));
-        // }
 
         public static StackFrame Empty() => new(0);
         public static StackFrame Null() => new();
@@ -345,6 +494,18 @@ public class StackAnalysis {
         //     newEntries.UnionWith(otherEntries);
         //     return newEntries;
         // }
+    }
+
+    public class CodeBlock {
+        public readonly int Start;
+        public readonly int End;
+        public HashSet<int> Falls = []; // TODO: Make this RO
+        public bool Visited;
+
+        public CodeBlock(int start, int end) {
+            Start = start;
+            End = end;
+        }
     }
 
     // public class OpCodeAction {
