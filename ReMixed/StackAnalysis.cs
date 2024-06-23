@@ -189,11 +189,6 @@ public class StackAnalysis {
 #endif
                 stackFrames[nextBlocks] = nextFrame ?? throw new NullReferenceException("nextFrame was never assigned!");
             }
-
-            // // Edge case: last block, flush the nextFrame to after it since it does not fall anywhere else
-            // if (currentBlock.Falls.Count) {
-            //     
-            // }
         }
 
         // Flush last nextFrame
@@ -211,13 +206,6 @@ public class StackAnalysis {
     // Generate a code block for every br or brc and at every index where they jump
     // Then create relationships for cache so that walking through this is not slow
     // Then do a DFS search visiting everything :peaceline:
-    // Bogus: ↓
-    // When analysing a code block, if it ends with a brc then just walk of, we know the
-    // stack state for the next one, and queue visits to the code block it jumps to
-    // if it ends with a br then immediately jump to that code block, if its already visited
-    // then go to the next queued block that we havent visited that we know the stack state of
-    // if there's none just stop, there's an infinite loop with dead code afterwards
-    // any unvisited blocks after analysis are dead
     private Dictionary<int, CodeBlock> AnalyzeCodeblocks() {
         // Turns out that control flow is also greatly more difficult with exceptions so this is not getting done now.
         if (TargetMethod.Body.HasExceptionHandlers)
@@ -271,9 +259,6 @@ public class StackAnalysis {
             allBreaks.UnionWith(jmps);
         }
 
-        // // Force generate the last block
-        // allBreaks.Add(methodInstructions.Count);
-
         // Make them
         Dictionary<int, CodeBlock> codeBlocks = [];
         int prev = 0;
@@ -283,17 +268,6 @@ public class StackAnalysis {
             // ALL codeblocks must jump to somewhere, thus the last instr of one (split - 1 is the last instr of the prev one)
             // necessarily need to exist in the jump table
             codeBlock.Falls = jumps[split - 1];
-//             if (jumps.TryGetValue(split - 1, out HashSet<int>? falls)) {
-//                 codeBlock.Falls = falls;
-//             }
-// #if DEBUG
-//             else { // All blocks except the next one strictly require that there are some jumps to somewhere
-//                 if (split != methodInstructions.Count)
-//                     throw new InvalidOperationException();
-//                 // See comment below
-//                 codeBlock.Falls = [methodInstructions.Count];
-//             }
-// #endif
             codeBlocks.Add(prev, codeBlock);
             prev = split;
         }
@@ -301,7 +275,6 @@ public class StackAnalysis {
         // Why should an empty codeblock exist outside the method? To simplify the edge case of the last codeblock
         // where it will not fall anywhere since it's the last one, so faking an "exit" block, it can be normalized
         // and such there's no need for edge cases in the loop
-        // Allso
         codeBlocks.Add(methodInstructions.Count, new CodeBlock(methodInstructions.Count, methodInstructions.Count));
 
         return codeBlocks;
@@ -369,14 +342,6 @@ public class StackAnalysis {
             Branches.Add(jmpIdx, [i]);
         else
             possibleJumps.Add(i);
-
-        // StackFrame nStFrame = curr.PushType(stackRes);
-        // if (jumps.TryAdd(jmpIdx, nStFrame)) return;
-        // // Conflict: two branches jump to the same point
-        // if (!jumps[jmpIdx].Equals(nStFrame)) { // They MUST have the same stack types
-        //     throw new InvalidOperationException("Inconsistent stack sizes detected!");
-        //     // jumps[jmpIdx].MergeWith(nStFrame);
-        // } 
     }
 
     public static Collection<Instruction> CopyInstructions(MethodBody bo, Func<object, MethodBody, Collection<Instruction>, object>? operandConverter) {
@@ -479,21 +444,6 @@ public class StackAnalysis {
         public bool Equals(StackFrame obj) => this.stackAmount == obj.stackAmount;
 
         public bool IsNull() => stackAmount == -1;
-
-        // private static HashSet<int> ShiftEntries(HashSet<int> entries, int c) {
-        //     HashSet<int> shiftedEntries = new(entries.Count);
-        //     foreach (int entry in entries) {
-        //         shiftedEntries.Add(entry + c);
-        //     }
-        //
-        //     return shiftedEntries;
-        // }
-
-        // private static HashSet<int> Merge(HashSet<int> entries, HashSet<int> otherEntries) {
-        //     HashSet<int> newEntries = new(entries);
-        //     newEntries.UnionWith(otherEntries);
-        //     return newEntries;
-        // }
     }
 
     public class CodeBlock {
