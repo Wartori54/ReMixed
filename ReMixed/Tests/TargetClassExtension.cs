@@ -23,24 +23,24 @@ public partial class TargetClassExtension : Extends<TargetClass> {
             cir.Cancel(0);
         }
     }
-
+    
     [Inject("System.Console; void WriteLine(string?)", true, index: 0, shift: InjectLocation.Shift.BeforeArguments)]
     public static void PrintSomething(ILPatcher.CallbackInfo cir, string arg) {
         if (arg.Length > 3)
             cir.Cancel();
     }
-
+    
     [Inject("TAIL", true)]
     private void SecretInc(ILPatcher.CallbackInfoRet<int> cir) {
         c++;
         cir.Cancel(_this.a + _this.b + this.c);
     }
-
+    
     [Inject("HEAD")]
     public static void SecretMethod(ILPatcher.CallbackInfo ci, List<int> c) {
         Console.WriteLine("Secret method heh " + c.Count);
     }
-
+    
     [Inject("HEAD", true)]
     public void AddOne(ILPatcher.CallbackInfoRet<List<int>> cir, List<int> arg) {
         arg.Add(1);

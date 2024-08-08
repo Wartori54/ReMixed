@@ -41,7 +41,6 @@ public class InjectionTracker {
 
     // Check if the prev injection instr and post injection instr match in orig and in modified
     private bool VerifyInjection(MethodBody modified, InjectionData data) {
-
         int origIndex = CalculateOrigIndex(data.StartIdx);
         int shift = data.AfterInstr ? 0 : 1; // CalculateOrigIndex may return a different index depending on the inj type
         if (data.StartIdx != 0) { // Cant check if injection is at the start

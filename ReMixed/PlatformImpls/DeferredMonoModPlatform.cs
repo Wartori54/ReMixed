@@ -7,52 +7,26 @@ using MonoMod.RuntimeDetour;
 namespace ReMixed.PlatformImpls;
 
 public class DeferredMonoModPlatform : MonoModPlatform {
-    private readonly ActionPatchCollection<PatchPlatform.Cursor> methodPatches;
+    private readonly ActionPatchCollection patches = new();
     
-    public DeferredMonoModPlatform(ILContext ctx, MethodBase origMethod,
-        ActionPatchCollection<PatchPlatform.Cursor> patches) : base(ctx, origMethod) {
-        methodPatches = patches;
+    public DeferredMonoModPlatform(ThisCecilDefs.IThisCecilDefsProvider provider) : base(provider) {
     }
-    
-    private void Apply() {
-        MonoModCursor cursor = new(this);
-        methodPatches.RunPatches(cursor);
+
+    public override void ApplyPatch(MethodBase target, Action<IPatchContext.Cursor> patch) {
+        patches.AddPatch(target, patch);
     }
     
-    // Global state
-    private static readonly Dictionary<MethodBase, ActionPatchCollection<PatchPlatform.Cursor>> allPatches = new();
-    private static readonly Dictionary<MethodBase, ILHook> appliedPatches = new();
-
-    public new static void AutoHook(MethodBase method, Action<PatchPlatform.Cursor> action) {
-        if (!allPatches.TryGetValue(method, out ActionPatchCollection<PatchPlatform.Cursor>? patches)) {
-            patches = new ActionPatchCollection<PatchPlatform.Cursor>();
-            allPatches.Add(method, patches);
-        }
-        
-        patches.AddPatch(action);
-    }
-
-    public static void ApplyAll() {
-        foreach ((MethodBase target, ActionPatchCollection<PatchPlatform.Cursor> patches) in allPatches) {
-            if (appliedPatches.TryGetValue(target, out ILHook? hook)) { // If already patched we will have to undo :(
-                Console.WriteLine("Late patching is not recommended!");
-                hook.Undo();
-                hook.Dispose();
-            }
-            
-            // Otherwise do the patch
-            hook = new ILHook(target, ctx => {
-                DeferredMonoModPlatform platform = new(ctx, target, patches);
-                platform.Apply();
-            }, false);
-            
-            appliedPatches[target] = hook;
-            hook.Apply();
-        }
+    public void ApplyAll() {
+        patches.AllMethods(mb => {
+            hooks.Add(new ILHook(mb, ctx => {
+                MonoModContext mmCtx = new(ctx, mb);
+                patches.RunPatchesFor(mb, mmCtx.ContextCursor);
+            }));
+        });
     }
 
 
-    // public record DeferredILHook(MethodBase target, Action<PatchPlatform.Cursor> action) {
+    // public record DeferredILHook(MethodBase target, Action<PatchContext.Cursor> action) {
     //     private ILHook? inner;
     //     public bool IsApplied => inner != null;
     //
@@ -71,14 +45,26 @@ public class DeferredMonoModPlatform : MonoModPlatform {
     // }
 }
 
-public class ActionPatchCollection<T> {
-    private readonly List<Action<T>> patches = [];
+public class ActionPatchCollection {
+    private readonly Dictionary<MethodBase, List<Action<IPatchContext.Cursor>>> patches = [];
 
     // Patch ordering is not supported yet
-    public void AddPatch(Action<T> patch) => patches.Add(patch);
+    public void AddPatch(MethodBase target, Action<IPatchContext.Cursor> patch) {
+        if (!patches.TryGetValue(target, out List<Action<IPatchContext.Cursor>>? patchList)) {
+            patchList = new();
+            patches[target] = patchList;
+        }
+        patchList.Add(patch);
+    }
 
-    public void RunPatches(T cursor) {
-        foreach (Action<T> patch in patches) {
+    public void AllMethods(Action<MethodBase> run) {
+        foreach ((MethodBase mb, _) in patches) {
+            run(mb);
+        }
+    }
+
+    public void RunPatchesFor(MethodBase target, IPatchContext.Cursor cursor) {
+        foreach (Action<IPatchContext.Cursor> patch in patches[target]) {
             patch(cursor);
         }
     }

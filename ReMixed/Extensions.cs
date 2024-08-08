@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
-using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -475,5 +475,28 @@ public static class Extensions {
         if (selfOp == null && other.Operand == null) return true;
         if (selfOp == null || other.Operand == null) return false;
         return self.Operand.Equals(other.Operand);
+    }
+
+    // Checks for a reflection type on the module, properly handling nested types
+    public static TypeDefinition GetType(this ModuleDefinition moduleDefinition, Type targetType) {
+        // Non-nested types follow the exact format that cecil expect (except for genericinstancetypes TODO)
+        if (!targetType.IsNested) {
+            return moduleDefinition.GetType(targetType.FullName);
+        }
+
+        // Get the type stack for our target
+        Stack<Type> nestedTypes = new();
+        for (Type? declType = targetType; declType != null; declType = declType.DeclaringType)
+            nestedTypes.Push(declType);
+
+        // Tranverse it getting the nested types on each step
+        TypeDefinition? currentType;
+        for (currentType = moduleDefinition.GetType(nestedTypes.Pop().FullName); // Firstly get the most declaring type
+             nestedTypes.Count != 0 && nestedTypes.TryPop(out Type? type); // Then while we havent run out of it yet, and also pop the next type as well
+             currentType = currentType.NestedTypes.FirstOrDefault(t => t.Name == type.Name)) { // Advance on the tree
+            if (currentType == null) throw new Exception($"Could not find type {targetType.FullName} in module {moduleDefinition.Name} (");
+        }
+
+        return currentType ?? throw new UnreachableException();
     }
 }

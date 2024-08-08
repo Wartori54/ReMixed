@@ -2,119 +2,119 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
-using System.Reflection;
-using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using ReMixed.Positioning;
 using BindingFlags = System.Reflection.BindingFlags;
-using Cursor = ReMixed.PatchPlatform.Cursor;
-using ILLabel = ReMixed.PatchPlatform.ILLabel;
+using Cursor = ReMixed.IPatchContext.Cursor;
+using ILLabel = ReMixed.IPatchContext.ILLabel;
 using MethodBody = Mono.Cecil.Cil.MethodBody;
 
 namespace ReMixed;
 
-public static class ILPatcher {
+public class ILPatcher {
 
-    /// <summary>
-    /// Replaces a const.
-    /// </summary>
-    /// <param name="cursor">The cursor.</param>
-    /// <param name="target">The value to find.</param>
-    /// <param name="value">The new value.</param>
-    /// <typeparam name="T">The type of the constant to target.</typeparam>
-    public static void ReplaceNextConst<T>(Cursor cursor, T target, T value) {
-        FindNextConst(cursor, target);
-        
-        ReplaceLdc(cursor.Next!, value);
+    private readonly ThisCecilDefs thisCecilDefs;
+    
+    public ILPatcher(ThisCecilDefs thisCecilDefs) {
+        this.thisCecilDefs = thisCecilDefs;
     }
 
-    /// <summary>
-    /// Replaces a const, with a delegate
-    /// </summary>
-    /// <param name="cursor">The cursor.</param>
-    /// <param name="target">The value to find.</param>
-    /// <param name="value">The new not-so constant value.</param>
-    /// <typeparam name="T">The type of the constant to target.</typeparam>
-    public static void ReplaceNextConst<T>(Cursor cursor, T target, Func<T> value) {
-        FindNextConst(cursor, target);
-        
-        cursor.RemoveNext();
-        
-        cursor.EmitDelegate(value);
-    }
-
-    /// <summary>
-    /// Moves the cursor after the specified const.
-    /// </summary>
-    /// <param name="cursor">The cursor.</param>
-    /// <param name="target">The value to find.</param>
-    /// <typeparam name="T">The type of the constant to target.</typeparam>
-    /// <exception cref="InvalidOperationException"></exception>
-    /// <exception cref="ArgumentOutOfRangeException"></exception>
-    public static void FindNextConst<T>(Cursor cursor, T target) {
-        Predicate<Instruction> selector = target switch {
-            float v => i => i.MatchLdcR4(v),
-            double v => i => i.MatchLdcR8(v),
-            int v => i => i.MatchLdcI4(v),
-            long v => i => i.MatchLdcI8(v),
-            _ => throw new InvalidOperationException("Invalid constant type!")
-        };
-
-        if (!cursor.TryGotoNext(selector)) {
-            throw new ArgumentOutOfRangeException(nameof(cursor), "Cannot find target!");
-        }
-    }
-
-    private static void ReplaceLdc<T>(Instruction instr, T value) {
-        switch (value) {
-            case double d:
-                instr.OpCode = OpCodes.Ldc_R8;
-                instr.Operand = d;
-                break;
-            case float f:
-                instr.OpCode = OpCodes.Ldc_R4;
-                instr.Operand = f;
-                break;
-            case long l:
-                instr.OpCode = OpCodes.Ldc_I8;
-                instr.Operand = l;
-                break;
-            case int i: // ints are fun: theres 12 ways
-                switch (i) { // Switch in switch :D
-                    case >= -1 and <= 8: // Use faster aliases for small values
-                        instr.OpCode = i switch {
-                            0 => OpCodes.Ldc_I4_0,
-                            1 => OpCodes.Ldc_I4_1,
-                            2 => OpCodes.Ldc_I4_2,
-                            3 => OpCodes.Ldc_I4_3,
-                            4 => OpCodes.Ldc_I4_4,
-                            5 => OpCodes.Ldc_I4_5,
-                            6 => OpCodes.Ldc_I4_6,
-                            7 => OpCodes.Ldc_I4_7,
-                            8 => OpCodes.Ldc_I4_8,
-                            -1 => OpCodes.Ldc_I4_M1,
-                            _ => throw new ArgumentOutOfRangeException($"{nameof(i)}"),
-                        };
-                        instr.Operand = null;
-                        break;
-                    case >= -128 and <= 127: // Use short form for bytes
-                        instr.OpCode = OpCodes.Ldc_I4_S;
-                        instr.Operand = i;
-                        break;
-                    default: // Default to default way
-                        instr.OpCode = OpCodes.Ldc_I4;
-                        instr.Operand = i;
-                        break;
-                }
-
-                break;
-        }
-    }
+    // /// <summary>
+    // /// Replaces a const.
+    // /// </summary>
+    // /// <param name="cursor">The cursor.</param>
+    // /// <param name="target">The value to find.</param>
+    // /// <param name="value">The new value.</param>
+    // /// <typeparam name="T">The type of the constant to target.</typeparam>
+    // public void ReplaceNextConst<T>(Cursor cursor, T target, T value) {
+    //     FindNextConst(cursor, target);
+    //     
+    //     ReplaceLdc(cursor.Next!, value);
+    // }
+    //
+    // /// <summary>
+    // /// Replaces a const, with a delegate
+    // /// </summary>
+    // /// <param name="cursor">The cursor.</param>
+    // /// <param name="target">The value to find.</param>
+    // /// <param name="value">The new not-so constant value.</param>
+    // /// <typeparam name="T">The type of the constant to target.</typeparam>
+    // public void ReplaceNextConst<T>(Cursor cursor, T target, Func<T> value) {
+    //     FindNextConst(cursor, target);
+    //     
+    //     cursor.RemoveNext();
+    //     
+    //     cursor.EmitDelegate(value);
+    // }
+    //
+    // /// <summary>
+    // /// Moves the cursor after the specified const.
+    // /// </summary>
+    // /// <param name="cursor">The cursor.</param>
+    // /// <param name="target">The value to find.</param>
+    // /// <typeparam name="T">The type of the constant to target.</typeparam>
+    // /// <exception cref="InvalidOperationException"></exception>
+    // /// <exception cref="ArgumentOutOfRangeException"></exception>
+    // public void FindNextConst<T>(Cursor cursor, T target) {
+    //     Predicate<Instruction> selector = target switch {
+    //         float v => i => i.MatchLdcR4(v),
+    //         double v => i => i.MatchLdcR8(v),
+    //         int v => i => i.MatchLdcI4(v),
+    //         long v => i => i.MatchLdcI8(v),
+    //         _ => throw new InvalidOperationException("Invalid constant type!")
+    //     };
+    //
+    //     if (!cursor.TryGotoNext(selector)) {
+    //         throw new ArgumentOutOfRangeException(nameof(cursor), "Cannot find target!");
+    //     }
+    // }
+    //
+    // private void ReplaceLdc<T>(Instruction instr, T value) {
+    //     switch (value) {
+    //         case double d:
+    //             instr.OpCode = OpCodes.Ldc_R8;
+    //             instr.Operand = d;
+    //             break;
+    //         case float f:
+    //             instr.OpCode = OpCodes.Ldc_R4;
+    //             instr.Operand = f;
+    //             break;
+    //         case long l:
+    //             instr.OpCode = OpCodes.Ldc_I8;
+    //             instr.Operand = l;
+    //             break;
+    //         case int i: // ints are fun: theres 12 ways
+    //             switch (i) { // Switch in switch :D
+    //                 case >= -1 and <= 8: // Use faster aliases for small values
+    //                     instr.OpCode = i switch {
+    //                         0 => OpCodes.Ldc_I4_0,
+    //                         1 => OpCodes.Ldc_I4_1,
+    //                         2 => OpCodes.Ldc_I4_2,
+    //                         3 => OpCodes.Ldc_I4_3,
+    //                         4 => OpCodes.Ldc_I4_4,
+    //                         5 => OpCodes.Ldc_I4_5,
+    //                         6 => OpCodes.Ldc_I4_6,
+    //                         7 => OpCodes.Ldc_I4_7,
+    //                         8 => OpCodes.Ldc_I4_8,
+    //                         -1 => OpCodes.Ldc_I4_M1,
+    //                         _ => throw new ArgumentOutOfRangeException($"{nameof(i)}"),
+    //                     };
+    //                     instr.Operand = null;
+    //                     break;
+    //                 case >= -128 and <= 127: // Use short form for bytes
+    //                     instr.OpCode = OpCodes.Ldc_I4_S;
+    //                     instr.Operand = i;
+    //                     break;
+    //                 default: // Default to default way
+    //                     instr.OpCode = OpCodes.Ldc_I4;
+    //                     instr.Operand = i;
+    //                     break;
+    //             }
+    //
+    //             break;
+    //     }
+    // }
 
     /// <summary>
     /// Injects a call before any method.
@@ -122,7 +122,7 @@ public static class ILPatcher {
     /// <param name="cursor">A cursor, its position will be overriden.</param>
     /// <param name="target">The target inject location.</param>
     /// <param name="injection">The payload.</param>
-    public static void InjectCallAt(Cursor cursor, InjectLocation target, MethodBase injection) {
+    public void InjectCallAt(Cursor cursor, InjectLocation target, MethodReference injection) {
         // Reset cursor
         cursor.GotoFirst();
         // Find target
@@ -133,13 +133,13 @@ public static class ILPatcher {
         // Register it
         int startInjIdx = prevInstr == null ? 0 : cursor.Method.Body.Instructions.IndexOf(prevInstr.Next);
         int endInjIdx = cursor.Next == null ? cursor.Method.Body.Instructions.Count : cursor.Method.Body.Instructions.IndexOf(cursor.Next);
-        InjectionTracker.InjectionData data = cursor.Platform.InjectionTracker.RegisterInjection(cursor.Method.Body,
+        InjectionTracker.InjectionData data = cursor.Context.InjectionTracker.RegisterInjection(cursor.Method.Body,
             startInjIdx,
             endInjIdx - startInjIdx,
             !InjectLocation.ShiftReplacesInstr(target.ShiftBy));
         
         if (InjectLocation.ShiftReplacesInstr(target.ShiftBy)) {
-            RetargetJumps(cursor.Platform, prevInstr?.Next, cursor.Next, data);
+            RetargetJumps(cursor.Context, prevInstr?.Next, cursor.Next, data);
         }
     }
     
@@ -151,7 +151,7 @@ public static class ILPatcher {
     /// <param name="injection">The payload.</param>
     /// <typeparam name="T">The return type of the method.</typeparam>
     /// <exception cref="InvalidOperationException">If something goes wrong.</exception>
-    public static void InjectCallAt<T>(Cursor cursor, InjectLocation target, MethodBase injection) {
+    public void InjectCallAt<T>(Cursor cursor, InjectLocation target, MethodReference injection) {
         // Reset cursor
         cursor.GotoFirst();
         // Find target
@@ -165,13 +165,13 @@ public static class ILPatcher {
         // Register it
         int startInjIdx = prevInstr == null ? 0 : cursor.Method.Body.Instructions.IndexOf(prevInstr.Next);
         int endInjIdx = cursor.Next == null ? cursor.Method.Body.Instructions.Count : cursor.Method.Body.Instructions.IndexOf(cursor.Next);
-        InjectionTracker.InjectionData data = cursor.Platform.InjectionTracker.RegisterInjection(cursor.Method.Body,
+        InjectionTracker.InjectionData data = cursor.Context.InjectionTracker.RegisterInjection(cursor.Method.Body,
             startInjIdx,
             endInjIdx - startInjIdx,
             !InjectLocation.ShiftReplacesInstr(target.ShiftBy));
         
         if (InjectLocation.ShiftReplacesInstr(target.ShiftBy)) {
-            RetargetJumps(cursor.Platform, prevInstr?.Next, cursor.Next, data);
+            RetargetJumps(cursor.Context, prevInstr?.Next, cursor.Next, data);
         }
         
     }
@@ -186,7 +186,7 @@ public static class ILPatcher {
     // pop...pop
     // ret
     // It can also omit the canceling part to just call a method.
-    private static void InternalInjectCallAt(Cursor cursor, int popCount, MethodBase injection, bool cancellable) {
+    private void InternalInjectCallAt(Cursor cursor, int popCount, MethodReference injection, bool cancellable) {
         // Cursor is assumed to be at the correct position
         
         EmitCallbackInfo(cursor, cancellable); // Emit the CI
@@ -199,8 +199,8 @@ public static class ILPatcher {
 
         if (!cancellable) return;
         
-        cursor.EmitCall(typeof(CallbackInfo).GetMethod(nameof(CallbackInfo.IsCanceled), BindingFlags.Instance | BindingFlags.Public)
-                                    ?? throw new InvalidOperationException()); // is cancel
+        cursor.EmitCall(thisCecilDefs.CIIsCanceled /*typeof(CallbackInfo).GetMethod(nameof(CallbackInfo.IsCanceled), BindingFlags.Instance | BindingFlags.Public)
+                                    ?? throw new InvalidOperationException()*/); // is cancel
         
         ILLabel continueLabel = cursor.GetLabel(); // The next instruction is the next orig instruction so get a label to it
         cursor.EmitBrFalse(continueLabel); // and point the brfalse to it
@@ -225,7 +225,7 @@ public static class ILPatcher {
     // ldloc cir
     // IL_ret_routine: call T CallbackInfoRet<T>::GetRet
     // ret
-    private static void InternalInjectCallAt<T>(Cursor cursor, int popCount, MethodBase injection) {
+    private void InternalInjectCallAt<T>(Cursor cursor, int popCount, MethodReference injection) {
         // Cursor is assumed to be at the correct position
         
         EmitCallbackInfoRet<T>(cursor); // add the newobj
@@ -237,8 +237,8 @@ public static class ILPatcher {
         
         EmitInjectionMethod(injection, cursor); // the delegate
 
-        cursor.EmitCall(typeof(CallbackInfo).GetMethod(nameof(CallbackInfo.IsCanceled), BindingFlags.Instance | BindingFlags.Public)
-                            ?? throw new InvalidOperationException()); // is cancel
+        cursor.EmitCall(thisCecilDefs.CIIsCanceled/*typeof(CallbackInfo).GetMethod(nameof(CallbackInfo.IsCanceled), BindingFlags.Instance | BindingFlags.Public)
+                            ?? throw new InvalidOperationException()*/); // is cancel
 
         // Label to continue execution normally
         ILLabel continueLabel = cursor.GetLabel();
@@ -252,8 +252,8 @@ public static class ILPatcher {
         // Get the cir again
         cursor.EmitLdLoc(cirLoc);
         
-        cursor.EmitCall(typeof(CallbackInfoRet<T>).GetMethod(nameof(CallbackInfoRet<T>.GetRet), BindingFlags.Instance | BindingFlags.Public) 
-                        ?? throw new InvalidOperationException()); // get ret
+        cursor.EmitCall(thisCecilDefs.CIRGetRetT<T>() /*typeof(CallbackInfoRet<T>).GetMethod(nameof(CallbackInfoRet<T>.GetRet), BindingFlags.Instance | BindingFlags.Public) 
+                        ?? throw new InvalidOperationException()*/); // get ret
 
         cursor.EmitRet(); // the return
     }
@@ -265,14 +265,14 @@ public static class ILPatcher {
     /// <param name="target">The InjectLocation to follow.</param>
     /// <returns>An integer containing the amount of elements that have to be popped to cancel a call.</returns>
     /// <exception cref="ArgumentOutOfRangeException"></exception>
-    private static int GoToCall(Cursor cursor, InjectLocation target) {
+    private int GoToCall(Cursor cursor, InjectLocation target) {
         for (int i = 0; i < target.Idx + 1; i++) {
-            i = cursor.Platform.InjectionTracker.NextFreeIndex(i);
+            i = cursor.Context.InjectionTracker.NextFreeIndex(i);
             if (!cursor.TryGotoNext(delegate(Instruction instruction) {
                     // we cannot use the predicate directly since it could match injected instrs
                     if (target.Target.Predicate(instruction)) {
                         int idx = cursor.Method.Body.Instructions.IndexOf(instruction);
-                        return !cursor.Platform.InjectionTracker.IsInInjection(idx);
+                        return !cursor.Context.InjectionTracker.IsInInjection(idx);
                     }
 
                     return false;
@@ -284,21 +284,21 @@ public static class ILPatcher {
         return target.Target.HandleShift(cursor, target.ShiftBy);
     }
 
-    private static void EmitCallbackInfo(Cursor cursor, bool returnable) {
+    private void EmitCallbackInfo(Cursor cursor, bool returnable) {
         cursor.EmitLdcI4(returnable ? 1 : 0);
-        cursor.EmitNewobj(typeof(CallbackInfo).GetConstructor([typeof(bool)]) 
-                          ?? throw new InvalidOperationException());
+        cursor.EmitNewobj(thisCecilDefs.CICtor /*typeof(CallbackInfo).GetConstructor([typeof(bool)]) 
+                          ?? throw new InvalidOperationException()*/);
     }
 
-    private static void EmitCallbackInfoRet<T>(Cursor cursor) {
-        cursor.EmitNewobj(typeof(CallbackInfoRet<T>).GetConstructor([]) 
-                          ?? throw new InvalidOperationException());
+    private void EmitCallbackInfoRet<T>(Cursor cursor) {
+        cursor.EmitNewobj(thisCecilDefs.CIRCtorT<T>()/*typeof(CallbackInfoRet<T>).GetConstructor([]) 
+        //                     ?? throw new InvalidOperationException()*/);
     }
 
     // Emits the injection, analyzing its parameters: it may capture the instance, the target method args, both or nothing
-    private static void EmitInjectionMethod(MethodBase injection, Cursor cursor) {
+    private void EmitInjectionMethod(MethodReference injection, Cursor cursor) {
         MethodReference methodReference = cursor.Method.Module.ImportReference(injection);
-        MethodDefinition origMethod = cursor.Platform.GetRealMethod();
+        MethodDefinition origMethod = cursor.Context.GetRealMethod();
         // See `GetRealMethod` docs
         (bool capturesInstance, bool capturesArguments) = AnalyzeMethodReference(methodReference, origMethod);
         
@@ -315,7 +315,7 @@ public static class ILPatcher {
     }
 
     // Verifies an injection method contains the correct arguments for its task
-    private static (bool capturesInstance, bool capturesArguments) AnalyzeMethodReference(MethodReference methodReference, 
+    private (bool capturesInstance, bool capturesArguments) AnalyzeMethodReference(MethodReference methodReference, 
         MethodDefinition location) {
         if (methodReference.HasGenericParameters) { // TO DO
             throw new NotImplementedException();
@@ -325,12 +325,9 @@ public static class ILPatcher {
         
         if (methodReference.Parameters.Count == 0) throw new InvalidOperationException(); // TODO: Doc errors
         
-        CIReference ??= location.Module.ImportReference(typeof(CallbackInfo));
-        CIRReference ??= location.Module.ImportReference(typeof(CallbackInfoRet<>));
-        
         // Must start with a callback info of some type
-        if (!TypeReferenceEqual(methodReference.Parameters[0].ParameterType, CIReference) && 
-            TypeReferenceEqual(methodReference.Parameters[0].ParameterType, CIRReference))
+        if (!TypeReferenceEqual(methodReference.Parameters[0].ParameterType, thisCecilDefs.CIReference) && 
+            TypeReferenceEqual(methodReference.Parameters[0].ParameterType, thisCecilDefs.CIRReference))
             throw new InvalidOperationException();
         // Can be a ci alone
         if (methodReference.Parameters.Count == 1) // Single arg, captures nothing
@@ -359,31 +356,31 @@ public static class ILPatcher {
         return (withInstance, true);
     }
 
-    private static void RetargetJumps(PatchPlatform platform,
+    private static void RetargetJumps(IPatchContext context,
         Instruction? injStart,
         Instruction? bodyContinue,
         InjectionTracker.InjectionData injData) {
         if (injStart == null || bodyContinue == null) return;
         
         // Make sure to obtain the orig index for the StAnalysis
-        int idxInjStart = platform.PlatformCursor.Method.Body.Instructions.IndexOf(injStart);
-        int idxInjEnd = platform.PlatformCursor.Method.Body.Instructions.IndexOf(bodyContinue);
-        int origIndex = platform.InjectionTracker.CalculateOrigIndex(idxInjEnd);
+        int idxInjStart = context.ContextCursor.Method.Body.Instructions.IndexOf(injStart);
+        int idxInjEnd = context.ContextCursor.Method.Body.Instructions.IndexOf(bodyContinue);
+        int origIndex = context.InjectionTracker.CalculateOrigIndex(idxInjEnd);
         // TODO DEBUG REMOVE THIS
-        if (origIndex != platform.InjectionTracker.CalculateOrigIndex(idxInjStart))
+        if (origIndex != context.InjectionTracker.CalculateOrigIndex(idxInjStart))
             throw new InvalidOperationException();
 
         // TODO: check if theres an injection before this
         // Replace all branches with this instr, in case it has not been retargeted
-        bool hasBeenRetargeted = platform.InjectionTracker.Retargeted.GetValueOrDefault(origIndex, false);
-        List<int> branches = hasBeenRetargeted ? [] : platform.StAnalysis.Branches.GetValueOrDefault(origIndex, []);
-        platform.InjectionTracker.Retargeted[origIndex] = true;
+        bool hasBeenRetargeted = context.InjectionTracker.Retargeted.GetValueOrDefault(origIndex, false);
+        List<int> branches = hasBeenRetargeted ? [] : context.StAnalysis.Branches.GetValueOrDefault(origIndex, []);
+        context.InjectionTracker.Retargeted[origIndex] = true;
         foreach (int branch in branches) {
-            int inModifiedIdx = platform.InjectionTracker.CalculateModifiedIndex(branch);
-            MethodBody body = platform.PlatformCursor.Method.Body;
+            int inModifiedIdx = context.InjectionTracker.CalculateModifiedIndex(branch);
+            MethodBody body = context.ContextCursor.Method.Body;
             Instruction targetInstr = body.Instructions[inModifiedIdx];
             object standardizedObject =
-                platform.StAnalysis.OperandConverter?.Invoke(targetInstr.Operand, body, body.Instructions) ??
+                context.StAnalysis.OperandConverter?.Invoke(targetInstr.Operand, body, body.Instructions) ??
                 targetInstr.Operand;
             if (standardizedObject is Instruction) {
                 targetInstr.Operand = injStart;
@@ -400,27 +397,25 @@ public static class ILPatcher {
 
         // Check if there are injections before this
         if (injData.StartIdx != idxInjStart) { // If so retarget its branches to us instead of the body
-            MethodBody body = platform.PlatformCursor.Method.Body;
+            MethodBody body = context.ContextCursor.Method.Body;
             for (int i = idxInjStart - 1; i >= injData.StartIdx; i--) { // TODO: make this decently fast
-                Instruction targetInstr = platform.PlatformCursor.Method.Body.Instructions[i];
-                object standardizedOp = platform.StAnalysis.OperandConverter?.Invoke(targetInstr.Operand, body, body.Instructions) ??
+                Instruction targetInstr = context.ContextCursor.Method.Body.Instructions[i];
+                object standardizedOp = context.StAnalysis.OperandConverter?.Invoke(targetInstr.Operand, body, body.Instructions) ??
                                                         targetInstr.Operand;
                 if (standardizedOp is Instruction instr) { // Switches in injections are not supported yet
                     if (instr == bodyContinue) {
-                        platform.PlatformCursor.Method.Body.Instructions[i].Operand = injStart;
+                        context.ContextCursor.Method.Body.Instructions[i].Operand = injStart;
                     }
                 }
             }
         }
     }
 
-    private static TypeReference? CIReference;
-    private static TypeReference? CIRReference;
-
     // I know this is really bad, and hopefully cecil will add a way to compare TypeReferences, but for the meantime, this is it.
     private static readonly Func<TypeReference, TypeReference, bool> TypeReferenceEqual =
         typeof(MetadataResolver).GetMethod("AreSame", BindingFlags.Static | BindingFlags.NonPublic,
             [typeof(TypeReference), typeof(TypeReference)])!.CreateDelegate<Func<TypeReference, TypeReference, bool>>();
+
 
     // public class MethodTarget {
     //     public InjectTarget InjectTarget { get; }
@@ -568,6 +563,8 @@ public static class ILPatcher {
         private readonly bool cancelable;
         private bool cancelled;
 
+        // This is called from injected code
+        // ReSharper disable once MemberCanBeProtected.Global
         public CallbackInfo(bool cancelable = false) {
             this.cancelable = cancelable;
             cancelled = false;
@@ -602,6 +599,8 @@ public static class ILPatcher {
             base.Cancel();
         }
 
+        // This is called from api users
+        // ReSharper disable once MemberCanBePrivate.Global
         public void SetReturnValue(T value) {
             retValue = value;
         }

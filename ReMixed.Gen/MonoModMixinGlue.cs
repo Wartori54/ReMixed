@@ -181,14 +181,14 @@ public class MonoModMixinGlue : IIncrementalGenerator {
         sb.AppendLine($"public partial class {workingClass} {{");
         sb.AppendLine($"    private static bool MMGLUE_Applied;");
         sb.AppendLine($"");
-        sb.AppendLine($"    public static void MMGLUE_Patch() {{");
+        sb.AppendLine($"    public static void MMGLUE_Patch(DeferredMonoModPlatform platform) {{");
         sb.AppendLine($"        if (MMGLUE_Applied) throw new InvalidOperationException(\"Attempted to apply twice an Extends<T>\");");
         sb.AppendLine($"        MMGLUE_Applied = true;");
         sb.AppendLine($"        ConstructorInfo[] ctors = typeof({targetClass}).GetConstructors();");
         sb.AppendLine($"        for (int i = 0; i < ctors.Length; i++) {{");
-        sb.AppendLine($"            DeferredMonoModPlatform.AutoHook(ctors[i], cursor => {{");
-        sb.AppendLine($"                ILPatcher.InjectCallAt(cursor, new InjectLocation(InjectTarget.FromString(\"HEAD\"), false),");
-        sb.AppendLine($"                    typeof({workingClass}).GetMethod(nameof(ctorPatch), BindingFlags.NonPublic | BindingFlags.Static)!);");
+        sb.AppendLine($"            platform.ApplyPatch(ctors[i], cursor => {{");
+        sb.AppendLine($"                platform.ILPatcher.InjectCallAt(cursor, new InjectLocation(InjectTarget.FromString(\"HEAD\"), false),");
+        sb.AppendLine($"                    cursor.Context.ImportMethod(typeof({workingClass}).GetMethod(nameof(ctorPatch), BindingFlags.NonPublic | BindingFlags.Static)!));");
         sb.AppendLine($"            }});");
         sb.AppendLine($"        }}");
         foreach ((IMethodSymbol methodSymbol, IMethodSymbol hookTargetMethodSymbol) in glueSyntaxTarget.MethodSymbols) {
@@ -197,10 +197,10 @@ public class MonoModMixinGlue : IIncrementalGenerator {
                       $"        InjectAttribute {detourMethodName}_attribute = {GenerateReflectionFor(methodSymbol, glueSyntaxTarget.TypeProxy)}!.GetCustomAttribute<InjectAttribute>()!;");
             
             sb.AppendLine(
-                      $"        DeferredMonoModPlatform.AutoHook({GenerateReflectionFor(hookTargetMethodSymbol, glueSyntaxTarget.TypeProxy)}!, il => {{");
+                      $"        platform.ApplyPatch({GenerateReflectionFor(hookTargetMethodSymbol, glueSyntaxTarget.TypeProxy)}!, cursor => {{");
             // TODO: Shift support
             sb.AppendLine(
-                      $"            ILPatcher.InjectCallAt{(hookTargetMethodSymbol.ReturnsVoid ? "" : $"<{glueSyntaxTarget.TypeProxy.ProxyType(hookTargetMethodSymbol.ReturnType)}>")}(il, new InjectLocation(InjectTarget.FromString({detourMethodName}_attribute.MethodTarget), {detourMethodName}_attribute.Cancellable, {detourMethodName}_attribute.Shift, {detourMethodName}_attribute.Index), ((Delegate){(hookTargetMethodSymbol.IsStatic ? methodSymbol.Name : detourMethodName)}).Method);");
+                      $"            platform.ILPatcher.InjectCallAt{(hookTargetMethodSymbol.ReturnsVoid ? "" : $"<{glueSyntaxTarget.TypeProxy.ProxyType(hookTargetMethodSymbol.ReturnType)}>")}(cursor, new InjectLocation(InjectTarget.FromString({detourMethodName}_attribute.MethodTarget), {detourMethodName}_attribute.Cancellable, {detourMethodName}_attribute.Shift, {detourMethodName}_attribute.Index), cursor.Context.ImportMethod(((Delegate){(hookTargetMethodSymbol.IsStatic ? methodSymbol.Name : detourMethodName)}).Method));");
             // sb.AppendLine(
                       // $"            MonoModPlatform.LogAllInstrs(il);");
             sb.AppendLine(

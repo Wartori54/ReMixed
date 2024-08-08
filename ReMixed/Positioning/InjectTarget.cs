@@ -17,12 +17,12 @@ public abstract class InjectTarget {
     /// Whether this InjectTarget may inject the same payload into multiple places.
     /// Effectively stops/forces to continue the patcher routine from/to keep checking other instructions.
     /// </summary>
-    public abstract bool MultiMatch { get; }
+    public abstract bool MultiMatch { get; } // TODO: not implemented yet
     /// <summary>
     /// Returns whether the current instruction is a valid inject location.
     /// </summary>
     /// <param name="instruction">The instruction to test.</param>
-    /// <returns>Whether its the target InjectTarget.</returns>
+    /// <returns>Whether it is the target of InjectTarget.</returns>
     public abstract bool Predicate(Instruction instruction);
 
     /// <summary>
@@ -31,7 +31,7 @@ public abstract class InjectTarget {
     /// <param name="cursor">The cursor to move.</param>
     /// <param name="shift">The current shift setting</param>
     /// <returns>The amount of elements that may need to be popped when canceling.</returns>
-    public abstract int HandleShift(PatchPlatform.Cursor cursor, InjectLocation.Shift shift);
+    public abstract int HandleShift(IPatchContext.Cursor cursor, InjectLocation.Shift shift);
 
     /// <summary>
     /// Instantiates a new InjectTarget from a string.
@@ -44,8 +44,8 @@ public abstract class InjectTarget {
         ret = AbsolutePositionedInjectTarget.FromString(s); // It is not that
         if (ret != null) return ret;
         ret = MethodCallInjectTarget.FromString(s);
-        if (ret == null) throw new NotSupportedException(); // Uh oh
-        return ret;
+        if (ret != null) return ret;
+        throw new NotSupportedException(); // Uh oh
     }
 }
 
@@ -55,7 +55,7 @@ public abstract class InjectTarget {
 public class AbsolutePositionedInjectTarget : InjectTarget {
     public override bool MultiMatch { get; }
     private readonly Predicate<Instruction> injectPredicate;
-    private bool clearsRetValue;
+    private readonly bool clearsRetValue;
 
     private AbsolutePositionedInjectTarget(Predicate<Instruction> predicate, bool multiMatch, bool clearsReturn) {
         injectPredicate = predicate;
@@ -65,11 +65,11 @@ public class AbsolutePositionedInjectTarget : InjectTarget {
 
     public override bool Predicate(Instruction instruction) => injectPredicate(instruction);
     
-    public override int HandleShift(PatchPlatform.Cursor cursor, InjectLocation.Shift shift) {
+    public override int HandleShift(IPatchContext.Cursor cursor, InjectLocation.Shift shift) {
         if (shift != 0)
             throw new NotSupportedException("Cannot use non-default Shift with an absolute inject target!");
         // No-op, shifting is not supported by these types
-        // It may needed to pop a single element in case the injection is near returns
+        // It may need to pop a single element in case the injection is near returns
         return clearsRetValue && cursor.Method.ReturnType.FullName != typeof(void).FullName ? 1 : 0;
     }
 
@@ -107,7 +107,7 @@ public class MethodCallInjectTarget : InjectTarget {
                 "Parameter must contain exactly 1 semicolon between the type and the method decl");
         type = parts[0];
         
-        //https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/types
+        // https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/types
         SyntaxTree tree = CSharpSyntaxTree.ParseText(parts[1]);
         LocalFunctionStatementSyntax? localFunctionStatementSyntax = tree
             .GetRoot() // SyntaxNode
@@ -122,11 +122,11 @@ public class MethodCallInjectTarget : InjectTarget {
         return instruction.MatchCall(functionSyntax, type, out methodReference);
     }
 
-    public override int HandleShift(PatchPlatform.Cursor cursor, InjectLocation.Shift shift) {
+    public override int HandleShift(IPatchContext.Cursor cursor, InjectLocation.Shift shift) {
         // Remember to translate the modified instr indexes to orig indexes
-        int callInstr = cursor.Platform.InjectionTracker.CalculateOrigIndex(cursor.Method.Body.Instructions.IndexOf(cursor.Next));
+        int callInstr = cursor.Context.InjectionTracker.CalculateOrigIndex(cursor.Method.Body.Instructions.IndexOf(cursor.Next));
         if (callInstr == -1) throw new InvalidOperationException("Cannot obtain instruction index!");
-        StackAnalysis stackAnalysis = cursor.Platform.StAnalysis;
+        StackAnalysis stackAnalysis = cursor.Context.StAnalysis;
         IMethodSignature mr = (IMethodSignature)cursor.Next!.Operand; // Next must be a call
         StackAnalysis.StackFrame startFrame = stackAnalysis.StackFrames[callInstr];
         switch (shift) {
@@ -138,28 +138,28 @@ public class MethodCallInjectTarget : InjectTarget {
                 cursor.GotoNext();
                 // TODO: Consider this
                 if (MethodReference.ReturnType.FullName != typeof(void).FullName) { // try to move after any assignments
-                    // Dont go crazy, if next instr the stack goes down by one go for it
+                    // Don't go crazy, if next instr the stack goes down by one go for it
                     // MAYBETODO?
                 } // If its void then the value cannot be stored and thus theres no need to do literally anything
 
                 StackAnalysis.StackFrame targetFrame = stackAnalysis.StackFrames[callInstr+movIdx];
-                return targetFrame.stackAmount;
+                return targetFrame.Elements;
             }
             // Move RIGHT BEFORE the call instruction is executed, after all arguments are on the stack
             case InjectLocation.Shift.Before: {
                 // Actually we are already there, so only calculate pop values
-                return startFrame.stackAmount;
+                return startFrame.Elements;
             }
             // Move before all arguments are pushed to the stack for the method
             case InjectLocation.Shift.BeforeArguments: {
-                int stackElements = startFrame.stackAmount;
+                int stackElements = startFrame.Elements;
                 int extraElements = stackElements -
                                     (mr.GetStackConsumeCount() -
                                      (cursor.Next.OpCode.Code == Code.Newobj
                                          ? -1
                                          : 0)); // TODO: HACKFIX, newobj is marked as HasThis but does not consume a This
                 int currFrame = callInstr;
-                while (stackAnalysis.StackFrames[currFrame].stackAmount > extraElements) {
+                while (stackAnalysis.StackFrames[currFrame].Elements > extraElements) {
                     // If while going back we hit a branch target, it is required for argument creation to start at 
                     // least at the branch instruction, as such, it is required to move over there, even if the stack 
                     // is the required level at any point inside the branch
@@ -170,7 +170,7 @@ public class MethodCallInjectTarget : InjectTarget {
                     if (currFrame < 0) throw new InvalidOperationException();
                 }
 
-                cursor.MoveIndex(cursor.Platform.InjectionTracker.CalculateModifiedIndex(currFrame - callInstr));
+                cursor.MoveIndex(cursor.Context.InjectionTracker.CalculateModifiedIndex(currFrame - callInstr));
                 return extraElements;
             }
             default:
@@ -178,7 +178,11 @@ public class MethodCallInjectTarget : InjectTarget {
         }
     }
 
-    public new static MethodCallInjectTarget FromString(string s) {
-        return new MethodCallInjectTarget(s);
+    public new static MethodCallInjectTarget? FromString(string s) {
+        try {
+            return new MethodCallInjectTarget(s);
+        } catch (NotSupportedException) {
+            return null;
+        }
     }
 }

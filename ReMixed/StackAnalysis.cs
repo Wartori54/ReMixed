@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using Microsoft.CodeAnalysis;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using Mono.Collections.Generic;
@@ -31,12 +32,16 @@ public class StackAnalysis {
         }
     }
 
-    private readonly Dictionary<int, List<int>> branches = [];
+    private Dictionary<int, List<int>>? branches = null;
     // Dict of end to start indexes of branches
     public Dictionary<int, List<int>> Branches {
         get {
-            if (stackFrames == null)
-                Perform();
+            if (branches == null) {
+                if (stackFrames != null) throw new InvalidOperationException();
+                branches = new Dictionary<int, List<int>>();
+                GenBranchesFastPass();
+            }
+            
             return branches;
         }
     }
@@ -53,6 +58,7 @@ public class StackAnalysis {
     /// <exception cref="ArgumentOutOfRangeException"></exception>
     [MemberNotNull(nameof(stackFrames))]
     private void Perform() {
+        branches = new Dictionary<int, List<int>>(); // TODO: Maybe dont regenerate branches?
         stackFrames = new Collection<StackFrame>(methodInstructions.Count + 1);
         for (int i = 0; i < methodInstructions.Count + 1; i++) {
             stackFrames.Add(StackFrame.Null());
@@ -96,7 +102,7 @@ public class StackAnalysis {
                         if (i + 1 != currentBlock.End) throw new InvalidOperationException();
 
                         int jmpIdx = methodInstructions.IndexOf((Instruction)methodInstructions[i].Operand);
-                        AddJump(i, jmpIdx, curr, stackRes);
+                        AddJump(i, jmpIdx);
                         
                         if (op == OpCodes.Br || op == OpCodes.Br_S) {
                             nextFrame = curr; // Stack does not change with normal brs
@@ -122,10 +128,10 @@ public class StackAnalysis {
                         if (op.OperandType == OperandType.InlineSwitch) { // operand is Instruction[]
                             Instruction[] switchJumps = (Instruction[])methodInstructions[i].Operand;
                             foreach (Instruction switchJump in switchJumps) {
-                                AddJump(i, methodInstructions.IndexOf(switchJump), curr, stackRes);
+                                AddJump(i, methodInstructions.IndexOf(switchJump));
                             }
                         } else {
-                            AddJump(i, methodInstructions.IndexOf((Instruction)methodInstructions[i].Operand), curr, stackRes);
+                            AddJump(i, methodInstructions.IndexOf((Instruction)methodInstructions[i].Operand));
                         }
 
                         nextFrame = curr = curr.PushType(stackRes);
@@ -177,6 +183,14 @@ public class StackAnalysis {
             // Go to the next ones
             foreach (int nextBlocks in currentBlock.Falls) {
                 CodeBlock next = codeBlocks[nextBlocks];
+                if (next.Start < currentBlock.Start && !currentBlock.Falls.Contains(currentBlock.End)) {
+                    // ECMA-335 III.1.7.5 defines that backward jumps require an empty stack if and only if the
+                    // codeblock ends with an unconditional jump
+                    if (!nextFrame.IsEmpty()) {
+                        throw new InvalidOperationException("Detected non empty stack after an unconditional jump");
+                    }
+                }
+                
                 if (next.Visited) { // If visited only verify stacks
                     if (!stackFrames[nextBlocks].Equals(nextFrame))
                         throw new InvalidOperationException("Inconsistent stack sizes detected!");
@@ -194,7 +208,7 @@ public class StackAnalysis {
         // Flush last nextFrame
         stackFrames[currentBlock.End] = nextFrame!;
 
-        Console.WriteLine($"Final stack frame: {stackFrames[methodInstructions.Count].stackAmount}");
+        // Console.WriteLine($"Final stack frame: {stackFrames[methodInstructions.Count].stackAmount}");
 #if DEBUG
         if (stackFrames.Any(stackFrame => stackFrame.IsNull())) {
             throw new NullReferenceException("Found null stack frame!");
@@ -333,7 +347,7 @@ public class StackAnalysis {
         return curr.PushType(realSb);
     }
 
-    private void AddJump(int i, int jmpIdx, StackFrame curr, int stackRes) {
+    private void AddJump(int i, int jmpIdx) {
         if (jmpIdx == -1) {
             throw new InvalidOperationException("Invalid jump target?");
         }
@@ -342,6 +356,20 @@ public class StackAnalysis {
             Branches.Add(jmpIdx, [i]);
         else
             possibleJumps.Add(i);
+    }
+
+    private void GenBranchesFastPass() {
+        for (int i = 0; i < methodInstructions.Count; i++) {
+            if (methodInstructions[i].OpCode.FlowControl is FlowControl.Branch or FlowControl.Cond_Branch) {
+                if (methodInstructions[i].Operand is Instruction[] jmps) {
+                    foreach (Instruction jmp in jmps) {
+                        AddJump(i, methodInstructions.IndexOf(jmp));
+                    }
+                } else {
+                    AddJump(i, methodInstructions.IndexOf((Instruction) methodInstructions[i].Operand));
+                }
+            }
+        }
     }
 
     public static Collection<Instruction> CopyInstructions(MethodBody bo, Func<object, MethodBody, Collection<Instruction>, object>? operandConverter) {
@@ -369,7 +397,7 @@ public class StackAnalysis {
     }
 
     /// <summary>
-    /// Gets the amount of entries pushed or poped to/from the stack
+    /// Gets the amount of entries pushed or popped to/from the stack
     /// </summary>
     /// <param name="sb">The stack behaviour</param>
     /// <returns>An integer value. It may be `int.MinValue` in case it pops all values or it is dependent on the operand,
@@ -414,7 +442,9 @@ public class StackAnalysis {
     /// Represents a possible state of the stack at a certain point in time.
     /// </summary>
     public class StackFrame {
-        public readonly int stackAmount;
+        private readonly int stackAmount;
+
+        public int Elements => stackAmount;
 
         private StackFrame(int stackAmount) {
             if (stackAmount < 0) // TODO: Dont error here, do it at the end instead so that more info can be added
@@ -444,6 +474,7 @@ public class StackAnalysis {
         public bool Equals(StackFrame obj) => this.stackAmount == obj.stackAmount;
 
         public bool IsNull() => stackAmount == -1;
+        public bool IsEmpty() => stackAmount == 0;
     }
 
     public class CodeBlock {

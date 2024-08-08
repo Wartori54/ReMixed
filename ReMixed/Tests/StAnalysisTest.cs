@@ -11,7 +11,7 @@ public class StAnalysisTest {
 
         StackAnalysis stackAnalysis = new(thisType.Methods.First(m => m.Name == nameof(NotSoSimple)));
         foreach (StackAnalysis.StackFrame stackFrame in stackAnalysis.StackFrames) {
-            for (int i = 0; i < stackFrame.stackAmount; i++) {
+            for (int i = 0; i < stackFrame.Elements; i++) {
                 Console.Write("=");
             }
             Console.WriteLine();
@@ -20,7 +20,7 @@ public class StAnalysisTest {
         TypeDefinition otherType = asm.MainModule.GetType(typeof(StackAnalysis).FullName);
         StackAnalysis stackAnalysis2 = new(otherType.Methods.First(m => m.Name == "GetStackRes"));
         foreach (StackAnalysis.StackFrame stackFrame in stackAnalysis2.StackFrames) {
-            for (int i = 0; i < stackFrame.stackAmount; i++) {
+            for (int i = 0; i < stackFrame.Elements; i++) {
                 Console.Write("=");
             }
             Console.WriteLine();
@@ -32,7 +32,7 @@ public class StAnalysisTest {
         
         StackAnalysis stackAnalysis3 = new(ILMethods.Methods.First(m => m.Name == "FancyBr"));
         foreach (StackAnalysis.StackFrame stackFrame in stackAnalysis3.StackFrames) {
-            for (int i = 0; i < stackFrame.stackAmount; i++) {
+            for (int i = 0; i < stackFrame.Elements; i++) {
                 Console.Write("=");
             }
             Console.WriteLine();
