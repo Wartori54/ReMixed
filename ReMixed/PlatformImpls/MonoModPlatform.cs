@@ -1,32 +1,40 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using Mono.Cecil;
 using MonoMod.Cil;
 using MonoMod.RuntimeDetour;
 
 namespace ReMixed.PlatformImpls;
 
-public class MonoModPlatform : PatchPlatform, IDisposable {
+public class MonoModPlatform : PatchPlatform {
     private const string PlatformName = "MonoMod";
 
-    protected List<ILHook> hooks = [];
+    protected readonly List<ILHook> hooks = [];
+    protected readonly Dictionary<MethodDefinition, MonoModContext> DMDToContext = new();
+
+    public override Func<MethodDefinition, PatchableMethodDefinition> PatchProvider => 
+        m => new MonoModPatchableMethodDefinition(m, DMDToContext[m].Method);
 
     public MonoModPlatform(ThisCecilDefs.IThisCecilDefsProvider thisCecilDefsProvider) : base(PlatformName, thisCecilDefsProvider) {
     }
 
-    public override void ApplyPatch(MethodBase target, Action<IPatchContext.Cursor> patch) {
+    public override void ApplyPatch(MethodBase target, Action<MethodPatchContext.LegCursor> patch) {
         hooks.Add(new ILHook(target, GetManipulator(patch, target)));
     }
 
-    public void Dispose() {
+    public override void Dispose() {
         foreach (ILHook ilHook in hooks) {
             ilHook.Dispose();
         }
+        DMDToContext.Clear();
+        base.Dispose();
     }
     
-    private static ILContext.Manipulator GetManipulator(Action<IPatchContext.Cursor> action, MethodBase method) => ctx => {
+    private ILContext.Manipulator GetManipulator(Action<MethodPatchContext.LegCursor> action, MethodBase method) => ctx => {
         MonoModContext mmCtx = new(ctx, method);
-        MonoModContext.MonoModCursor cursor = new(mmCtx);
+        DMDToContext[mmCtx.Method] = mmCtx;
+        MethodPatchContext.LegCursor cursor = mmCtx.GetCursor();
         action(cursor);
     };
 }

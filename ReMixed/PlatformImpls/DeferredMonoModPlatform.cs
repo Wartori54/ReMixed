@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
-using MonoMod.Cil;
 using MonoMod.RuntimeDetour;
 
 namespace ReMixed.PlatformImpls;
@@ -12,7 +11,7 @@ public class DeferredMonoModPlatform : MonoModPlatform {
     public DeferredMonoModPlatform(ThisCecilDefs.IThisCecilDefsProvider provider) : base(provider) {
     }
 
-    public override void ApplyPatch(MethodBase target, Action<IPatchContext.Cursor> patch) {
+    public override void ApplyPatch(MethodBase target, Action<MethodPatchContext.LegCursor> patch) {
         patches.AddPatch(target, patch);
     }
     
@@ -20,7 +19,18 @@ public class DeferredMonoModPlatform : MonoModPlatform {
         patches.AllMethods(mb => {
             hooks.Add(new ILHook(mb, ctx => {
                 MonoModContext mmCtx = new(ctx, mb);
-                patches.RunPatchesFor(mb, mmCtx.ContextCursor);
+                patches.RunPatchesFor(mb, mmCtx.GetCursor());
+                // MethodPatchContext.LogAllInstrs(mmCtx);
+                // try {
+                    // foreach (StackAnalysis.StackFrame stackFrame in new StackAnalysis(mmCtx.Method, MonoModContext.StAnalysisConvert).StackFrames) {
+                        // Console.WriteLine(stackFrame.Elements);
+                    // }
+                    // Console.WriteLine(mmCtx.Method.Body.Instructions.Count);
+                    // foreach (VariableDefinition variable in mmCtx.Method.Body.Variables) {
+                        // Console.WriteLine($"{variable.Index} {variable.VariableType.FullName}");
+                    // }
+                // } catch (NotImplementedException) {
+                // }
             }));
         });
     }
@@ -46,11 +56,11 @@ public class DeferredMonoModPlatform : MonoModPlatform {
 }
 
 public class ActionPatchCollection {
-    private readonly Dictionary<MethodBase, List<Action<IPatchContext.Cursor>>> patches = [];
+    private readonly Dictionary<MethodBase, List<Action<MethodPatchContext.LegCursor>>> patches = [];
 
     // Patch ordering is not supported yet
-    public void AddPatch(MethodBase target, Action<IPatchContext.Cursor> patch) {
-        if (!patches.TryGetValue(target, out List<Action<IPatchContext.Cursor>>? patchList)) {
+    public void AddPatch(MethodBase target, Action<MethodPatchContext.LegCursor> patch) {
+        if (!patches.TryGetValue(target, out List<Action<MethodPatchContext.LegCursor>>? patchList)) {
             patchList = new();
             patches[target] = patchList;
         }
@@ -63,8 +73,8 @@ public class ActionPatchCollection {
         }
     }
 
-    public void RunPatchesFor(MethodBase target, IPatchContext.Cursor cursor) {
-        foreach (Action<IPatchContext.Cursor> patch in patches[target]) {
+    public void RunPatchesFor(MethodBase target, MethodPatchContext.LegCursor cursor) {
+        foreach (Action<MethodPatchContext.LegCursor> patch in patches[target]) {
             patch(cursor);
         }
     }

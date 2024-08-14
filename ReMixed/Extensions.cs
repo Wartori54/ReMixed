@@ -499,4 +499,12 @@ public static class Extensions {
 
         return currentType ?? throw new UnreachableException();
     }
+
+    public static MethodReference AttachToGIT(this MethodReference reference, GenericInstanceType gi) {
+        return new MethodReference(reference.Name, reference.ReturnType, gi) {
+            HasThis = reference.HasThis,
+            ExplicitThis = reference.ExplicitThis,
+            CallingConvention = MethodCallingConvention.Generic
+        };
+    }
 }

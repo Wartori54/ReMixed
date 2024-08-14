@@ -6,8 +6,7 @@ using Mono.Cecil;
 using Mono.Cecil.Cil;
 using ReMixed.Positioning;
 using BindingFlags = System.Reflection.BindingFlags;
-using Cursor = ReMixed.IPatchContext.Cursor;
-using ILLabel = ReMixed.IPatchContext.ILLabel;
+using Cursor = ReMixed.MethodPatchContext.Cursor;
 using MethodBody = Mono.Cecil.Cil.MethodBody;
 
 namespace ReMixed;
@@ -122,7 +121,7 @@ public class ILPatcher {
     /// <param name="cursor">A cursor, its position will be overriden.</param>
     /// <param name="target">The target inject location.</param>
     /// <param name="injection">The payload.</param>
-    public void InjectCallAt(Cursor cursor, InjectLocation target, MethodReference injection) {
+    public void InjectCallAt(MethodPatchContext.LegCursor cursor, InjectLocation target, MethodReference injection) {
         // Reset cursor
         cursor.GotoFirst();
         // Find target
@@ -151,7 +150,7 @@ public class ILPatcher {
     /// <param name="injection">The payload.</param>
     /// <typeparam name="T">The return type of the method.</typeparam>
     /// <exception cref="InvalidOperationException">If something goes wrong.</exception>
-    public void InjectCallAt<T>(Cursor cursor, InjectLocation target, MethodReference injection) {
+    public void InjectCallAt<T>(MethodPatchContext.LegCursor cursor, InjectLocation target, MethodReference injection) {
         // Reset cursor
         cursor.GotoFirst();
         // Find target
@@ -173,7 +172,6 @@ public class ILPatcher {
         if (InjectLocation.ShiftReplacesInstr(target.ShiftBy)) {
             RetargetJumps(cursor.Context, prevInstr?.Next, cursor.Next, data);
         }
-        
     }
     
     // Emits:
@@ -186,7 +184,7 @@ public class ILPatcher {
     // pop...pop
     // ret
     // It can also omit the canceling part to just call a method.
-    private void InternalInjectCallAt(Cursor cursor, int popCount, MethodReference injection, bool cancellable) {
+    private void InternalInjectCallAt(MethodPatchContext.LegCursor cursor, int popCount, MethodReference injection, bool cancellable) {
         // Cursor is assumed to be at the correct position
         
         EmitCallbackInfo(cursor, cancellable); // Emit the CI
@@ -202,8 +200,9 @@ public class ILPatcher {
         cursor.EmitCall(thisCecilDefs.CIIsCanceled /*typeof(CallbackInfo).GetMethod(nameof(CallbackInfo.IsCanceled), BindingFlags.Instance | BindingFlags.Public)
                                     ?? throw new InvalidOperationException()*/); // is cancel
         
-        ILLabel continueLabel = cursor.GetLabel(); // The next instruction is the next orig instruction so get a label to it
-        cursor.EmitBrFalse(continueLabel); // and point the brfalse to it
+        // PatchContext.RMLabel continueLabel = cursor.GetLabel(); // The next instruction is the next orig instruction so get a label to it
+        // cursor.EmitBrFalse(continueLabel); // and point the brfalse to it
+        cursor.EmitBrFalse(cursor.Next!);
         
         // Emit enough pops to empty the stack
         for (int i = 0; i < popCount; i++) {
@@ -225,14 +224,13 @@ public class ILPatcher {
     // ldloc cir
     // IL_ret_routine: call T CallbackInfoRet<T>::GetRet
     // ret
-    private void InternalInjectCallAt<T>(Cursor cursor, int popCount, MethodReference injection) {
+    private void InternalInjectCallAt<T>(MethodPatchContext.LegCursor cursor, int popCount, MethodReference injection) {
         // Cursor is assumed to be at the correct position
-        
         EmitCallbackInfoRet<T>(cursor); // add the newobj
 
         cursor.EmitDup(); // will be used by IsCancelled
         cursor.EmitDup(); // will be stored in a local variable
-        VariableDefinition cirLoc = cursor.CreateLocal(typeof(CallbackInfoRet<T>));
+        VariableDefinition cirLoc = cursor.CreateLocal(/*typeof(CallbackInfoRet<T>)*/ thisCecilDefs.CIRReferenceT<T>());
         cursor.EmitStLoc(cirLoc);
         
         EmitInjectionMethod(injection, cursor); // the delegate
@@ -241,8 +239,9 @@ public class ILPatcher {
                             ?? throw new InvalidOperationException()*/); // is cancel
 
         // Label to continue execution normally
-        ILLabel continueLabel = cursor.GetLabel();
-        cursor.EmitBrFalse(continueLabel); // Targets the next instruction since it is the next method's instruction
+        // PatchContext.RMLabel continueLabel = cursor.GetLabel();
+        // cursor.EmitBrFalse(continueLabel); 
+        cursor.EmitBrFalse(cursor.Next!); // Targets the next instruction since it is the next method's instruction
         
         // Emit all the pops required to empty the stack at this point
         for (int i = 0; i < popCount; i++) {
@@ -265,7 +264,7 @@ public class ILPatcher {
     /// <param name="target">The InjectLocation to follow.</param>
     /// <returns>An integer containing the amount of elements that have to be popped to cancel a call.</returns>
     /// <exception cref="ArgumentOutOfRangeException"></exception>
-    private int GoToCall(Cursor cursor, InjectLocation target) {
+    private int GoToCall(MethodPatchContext.LegCursor cursor, InjectLocation target) {
         for (int i = 0; i < target.Idx + 1; i++) {
             i = cursor.Context.InjectionTracker.NextFreeIndex(i);
             if (!cursor.TryGotoNext(delegate(Instruction instruction) {
@@ -296,7 +295,7 @@ public class ILPatcher {
     }
 
     // Emits the injection, analyzing its parameters: it may capture the instance, the target method args, both or nothing
-    private void EmitInjectionMethod(MethodReference injection, Cursor cursor) {
+    private void EmitInjectionMethod(MethodReference injection, MethodPatchContext.LegCursor cursor) {
         MethodReference methodReference = cursor.Method.Module.ImportReference(injection);
         MethodDefinition origMethod = cursor.Context.GetRealMethod();
         // See `GetRealMethod` docs
@@ -311,7 +310,7 @@ public class ILPatcher {
             }
         }
 
-        cursor.EmitCall(injection);
+        cursor.EmitCall(methodReference);
     }
 
     // Verifies an injection method contains the correct arguments for its task
@@ -327,7 +326,7 @@ public class ILPatcher {
         
         // Must start with a callback info of some type
         if (!TypeReferenceEqual(methodReference.Parameters[0].ParameterType, thisCecilDefs.CIReference) && 
-            TypeReferenceEqual(methodReference.Parameters[0].ParameterType, thisCecilDefs.CIRReference))
+            !TypeReferenceEqual(methodReference.Parameters[0].ParameterType, thisCecilDefs.CIRReferenceM(location.ReturnType)))
             throw new InvalidOperationException();
         // Can be a ci alone
         if (methodReference.Parameters.Count == 1) // Single arg, captures nothing
@@ -356,15 +355,15 @@ public class ILPatcher {
         return (withInstance, true);
     }
 
-    private static void RetargetJumps(IPatchContext context,
+    private static void RetargetJumps(MethodPatchContext context,
         Instruction? injStart,
         Instruction? bodyContinue,
         InjectionTracker.InjectionData injData) {
         if (injStart == null || bodyContinue == null) return;
         
         // Make sure to obtain the orig index for the StAnalysis
-        int idxInjStart = context.ContextCursor.Method.Body.Instructions.IndexOf(injStart);
-        int idxInjEnd = context.ContextCursor.Method.Body.Instructions.IndexOf(bodyContinue);
+        int idxInjStart = context.Method.Body.Instructions.IndexOf(injStart);
+        int idxInjEnd = context.Method.Body.Instructions.IndexOf(bodyContinue);
         int origIndex = context.InjectionTracker.CalculateOrigIndex(idxInjEnd);
         // TODO DEBUG REMOVE THIS
         if (origIndex != context.InjectionTracker.CalculateOrigIndex(idxInjStart))
@@ -377,7 +376,7 @@ public class ILPatcher {
         context.InjectionTracker.Retargeted[origIndex] = true;
         foreach (int branch in branches) {
             int inModifiedIdx = context.InjectionTracker.CalculateModifiedIndex(branch);
-            MethodBody body = context.ContextCursor.Method.Body;
+            MethodBody body = context.Method.Body;
             Instruction targetInstr = body.Instructions[inModifiedIdx];
             object standardizedObject =
                 context.StAnalysis.OperandConverter?.Invoke(targetInstr.Operand, body, body.Instructions) ??
@@ -397,14 +396,14 @@ public class ILPatcher {
 
         // Check if there are injections before this
         if (injData.StartIdx != idxInjStart) { // If so retarget its branches to us instead of the body
-            MethodBody body = context.ContextCursor.Method.Body;
+            MethodBody body = context.Method.Body;
             for (int i = idxInjStart - 1; i >= injData.StartIdx; i--) { // TODO: make this decently fast
-                Instruction targetInstr = context.ContextCursor.Method.Body.Instructions[i];
+                Instruction targetInstr = context.Method.Body.Instructions[i];
                 object standardizedOp = context.StAnalysis.OperandConverter?.Invoke(targetInstr.Operand, body, body.Instructions) ??
                                                         targetInstr.Operand;
                 if (standardizedOp is Instruction instr) { // Switches in injections are not supported yet
                     if (instr == bodyContinue) {
-                        context.ContextCursor.Method.Body.Instructions[i].Operand = injStart;
+                        context.Method.Body.Instructions[i].Operand = injStart;
                     }
                 }
             }

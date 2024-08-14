@@ -47,6 +47,7 @@ public class StackAnalysis {
     }
 
     public StackAnalysis(MethodDefinition method, Func<object, MethodBody, Collection<Instruction>, object>? operandConverter = null) {
+        Console.WriteLine($"Creating stack analysis for method  {method.FullName}");
         OperandConverter = operandConverter;
         TargetMethod = method;
         methodInstructions = CopyInstructions(method.Body, operandConverter);
@@ -208,7 +209,6 @@ public class StackAnalysis {
         // Flush last nextFrame
         stackFrames[currentBlock.End] = nextFrame!;
 
-        // Console.WriteLine($"Final stack frame: {stackFrames[methodInstructions.Count].stackAmount}");
 #if DEBUG
         if (stackFrames.Any(stackFrame => stackFrame.IsNull())) {
             throw new NullReferenceException("Found null stack frame!");
@@ -359,6 +359,7 @@ public class StackAnalysis {
     }
 
     private void GenBranchesFastPass() {
+        Console.WriteLine($"Performing branch fast-pass for method {TargetMethod.FullName}");
         for (int i = 0; i < methodInstructions.Count; i++) {
             if (methodInstructions[i].OpCode.FlowControl is FlowControl.Branch or FlowControl.Cond_Branch) {
                 if (methodInstructions[i].Operand is Instruction[] jmps) {

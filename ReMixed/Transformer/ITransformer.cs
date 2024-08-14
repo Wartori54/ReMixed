@@ -3,58 +3,28 @@ using Mono.Cecil;
 
 namespace ReMixed.Transformer;
 
-public interface ITransformer<in T> where T : IMemberDefinition {
+public interface ITransformer<in TPatch, in TTarget> where TPatch : IMemberDefinition where TTarget : IMemberDefinition {
     /// <summary>
-    /// Verifies whether the deserialized data is valid.
+    /// Verifies whether the transformer target the current mixin member.
     /// </summary>
     /// <param name="memberDef">The assigned member.</param>
-    /// <returns>The validity of the current state.</returns>
-    bool Validate(T memberDef);
+    /// <returns>Whether the transformer has to transform this member.</returns>
+    bool AppliesTo(TPatch memberDef);
+
+    /// <summary>
+    /// Obtains the predicate to find target members for this transformer for the given member source.
+    /// </summary>
+    /// <param name="memberDef">The member source we are working with.</param>
+    /// <returns>The predicate.</returns>
+    // Impl details: Ideally this call should not exist and it would be a nullable out parameter on the `AppliesTo`
+    // but because `out` parameters forbid contravariance we cannot use it, and must resort to using return values.
+    Predicate<TTarget> GetTargetPredicate(TPatch memberDef);
+    
     /// <summary>
     /// Called once per assigned target member, performs the transformation.
     /// </summary>
-    /// <param name="memberDef">The assigned member.</param>
-    void Perform(T memberDef);
+    /// <param name="memberDefSource">The assigned source member.</param>
+    /// <param name="memberDefTarget">The assigned target member.</param>
+    void Perform(TPatch memberDefSource, TTarget memberDefTarget);
 }
 
-public abstract class MethodTransformer : ITransformer<MethodDefinition> {
-    protected IPatchContext Context { get; }
-    
-    protected abstract bool MultiTarget { get; }
-
-    public MethodTransformer(IPatchContext context) {
-        Context = context;
-    }
-    
-    public abstract bool Validate(MethodDefinition memberDef);
-
-    public void Perform(MethodDefinition methodDef) {
-        IPatchContext.Cursor cursor = Context.ContextCursor;
-        if (MultiTarget) {
-            while (SeekTarget(cursor)) {
-                PerformMethod(methodDef, cursor);
-            }
-
-            return;
-        }
-
-        if (!SeekTarget(cursor))
-            throw new Exception("Single-target MethodTransformer impl did not throw when no target could be found!");
-        PerformMethod(methodDef, cursor);
-    }
-
-    /// <summary>
-    /// Moves the cursor to the next target.
-    /// </summary>
-    /// <param name="cursor">The cursor.</param>
-    /// <returns>Whether the next target was found for multi-target transformers and true or an exception for single-target transformers.</returns>
-    /// <remarks>It is a mistake to return false in a single-target transformer, a descriptive exception should be thrown instead.</remarks>
-    public abstract bool SeekTarget(IPatchContext.Cursor cursor);
-
-    /// <summary>
-    /// Does the transformation for the current cursor position.
-    /// </summary>
-    /// <param name="methodDef">The assigned MethodDefinition</param>
-    /// <param name="cursor">The positioned cursor.</param>
-    public abstract void PerformMethod(MethodDefinition methodDef, IPatchContext.Cursor cursor);
-}

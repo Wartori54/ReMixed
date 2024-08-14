@@ -4,31 +4,31 @@ using Mono.Cecil.Cil;
 
 namespace ReMixed.Transformer;
 
-public class AbsolutePositionedInjection : MethodTransformer {
+public class AbsolutePositionedInjection : MethodBodyTransformer {
     protected override bool MultiTarget { get; }
     private readonly Predicate<Instruction> injectPredicate;
     private bool clearsRetValue;
 
-    private AbsolutePositionedInjection(IPatchContext context, Predicate<Instruction> predicate, bool multiMatch, bool clearsReturn) : base(context) {
+    private AbsolutePositionedInjection(MethodPatchContext context, Predicate<Instruction> predicate, bool multiMatch, bool clearsReturn) : base(context) {
         injectPredicate = predicate;
         MultiTarget = multiMatch;
         clearsRetValue = clearsReturn;
     }
-    
-    public override bool Validate(MethodDefinition memberDef) {
-        return true;
-    }
 
-    public override bool SeekTarget(IPatchContext.Cursor cursor) {
-        if (!cursor.TryGotoNext(injectPredicate)) {
+    // protected override bool Validate(MethodBody memberDef) {
+    //     return true;
+    // }
+
+    public override bool SeekTarget(MethodPatchContext.Positioner positioner) {
+        if (!positioner.TryGotoNext(injectPredicate)) {
             throw new InvalidOperationException(); // TODO: actual errors
         }
 
         return true;
     }
 
-    public override void PerformMethod(MethodDefinition methodDef, IPatchContext.Cursor cursor) {
-        throw new NotImplementedException();
+    public override void PerformMethod(MethodPatchContext.Cursor cursor, PatchableMethodDefinition patchableMethodDefinition, MethodReference sourceMethod) {
+        
     }
 
     // public override int HandleShift(IPatchContext.Cursor cursor, InjectLocation.Shift shift) {
@@ -40,13 +40,13 @@ public class AbsolutePositionedInjection : MethodTransformer {
     // }
 
     // Represents an injection at the very first instruction of the method
-    public static AbsolutePositionedInjection HEAD(IPatchContext ctx) => new(ctx, _ => true, false, false);
+    public static AbsolutePositionedInjection HEAD(MethodPatchContext ctx) => new(ctx, _ => true, false, false);
     // Represents an injection at the very last instruction of the method
-    public static AbsolutePositionedInjection TAIL(IPatchContext ctx) => new(ctx, i => i.Next == null, false, true);
+    public static AbsolutePositionedInjection TAIL(MethodPatchContext ctx) => new(ctx, i => i.Next == null, false, true);
     // Represents an injection right before each return call of the method
-    public static AbsolutePositionedInjection RETURN(IPatchContext ctx) => new(ctx, Extensions.MatchRet, true, true);
+    public static AbsolutePositionedInjection RETURN(MethodPatchContext ctx) => new(ctx, Extensions.MatchRet, true, true);
 
-    public static Func<IPatchContext, AbsolutePositionedInjection>? FromString(string s) {
+    public static Func<MethodPatchContext, AbsolutePositionedInjection>? FromString(string s) {
         return s switch {
             "HEAD" => HEAD,
             "TAIL" => TAIL,

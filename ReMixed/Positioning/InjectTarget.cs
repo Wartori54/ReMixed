@@ -31,7 +31,7 @@ public abstract class InjectTarget {
     /// <param name="cursor">The cursor to move.</param>
     /// <param name="shift">The current shift setting</param>
     /// <returns>The amount of elements that may need to be popped when canceling.</returns>
-    public abstract int HandleShift(IPatchContext.Cursor cursor, InjectLocation.Shift shift);
+    public abstract int HandleShift(MethodPatchContext.LegCursor cursor, InjectLocation.Shift shift);
 
     /// <summary>
     /// Instantiates a new InjectTarget from a string.
@@ -65,12 +65,12 @@ public class AbsolutePositionedInjectTarget : InjectTarget {
 
     public override bool Predicate(Instruction instruction) => injectPredicate(instruction);
     
-    public override int HandleShift(IPatchContext.Cursor cursor, InjectLocation.Shift shift) {
+    public override int HandleShift(MethodPatchContext.LegCursor cursor, InjectLocation.Shift shift) {
         if (shift != 0)
             throw new NotSupportedException("Cannot use non-default Shift with an absolute inject target!");
         // No-op, shifting is not supported by these types
         // It may need to pop a single element in case the injection is near returns
-        return clearsRetValue && cursor.Method.ReturnType.FullName != typeof(void).FullName ? 1 : 0;
+        return (clearsRetValue && cursor.Method.ReturnType.FullName != typeof(void).FullName) ? 1 : 0;
     }
 
     // Represents an injection at the very first instruction of the method
@@ -122,7 +122,7 @@ public class MethodCallInjectTarget : InjectTarget {
         return instruction.MatchCall(functionSyntax, type, out methodReference);
     }
 
-    public override int HandleShift(IPatchContext.Cursor cursor, InjectLocation.Shift shift) {
+    public override int HandleShift(MethodPatchContext.LegCursor cursor, InjectLocation.Shift shift) {
         // Remember to translate the modified instr indexes to orig indexes
         int callInstr = cursor.Context.InjectionTracker.CalculateOrigIndex(cursor.Method.Body.Instructions.IndexOf(cursor.Next));
         if (callInstr == -1) throw new InvalidOperationException("Cannot obtain instruction index!");

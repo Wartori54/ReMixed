@@ -13,7 +13,13 @@ public class ThisCecilDefs {
     public readonly ModuleDefinition ThisModule;
 
     public readonly TypeDefinition CIReference;
-    public readonly TypeDefinition CIRReference;
+    private readonly TypeDefinition CIRReference;
+    public TypeReference CIRReferenceT<T>() {
+        return BuildGenericTypeInstance(CIRReference, typeof(T));
+    }
+    public TypeReference CIRReferenceM(TypeReference arg) {
+        return BuildGenericTypeInstance(CIRReference, arg);
+    }
     // public static readonly TypeDefinition CIRReference = MMReflectionImporter.ProviderNoDefault.GetReflectionImporter(ThisModule).ImportReference(typeof(ILPatcher.CallbackInfoRet<>), null).Resolve();
 
     public readonly MethodDefinition CICtor; // There should only be one ctor
@@ -40,10 +46,16 @@ public class ThisCecilDefs {
         CIRGetRet = CIRReference.Methods.First(m => m.Name == nameof(ILPatcher.CallbackInfoRet<int>.GetRet));
     }
 
-    private MethodReference BuildGenericTypeMethod(MethodReference mref, Type type) {
-        GenericInstanceType gi = new(mref.DeclaringType);
-        gi.GenericArguments.Add(ThisModule.ImportReference(type));
-        return new MethodReference(mref.Name, mref.ReturnType, gi);
+    private GenericInstanceType BuildGenericTypeInstance(TypeReference tref, Type type) => BuildGenericTypeInstance(tref, tref.Module.ImportReference(type));
+
+    private GenericInstanceType BuildGenericTypeInstance(TypeReference tref, TypeReference type) {
+        GenericInstanceType gi = new(tref);
+        gi.GenericArguments.Add(type);
+        return gi;
+    }
+
+    private MethodReference BuildGenericTypeMethod(MethodDefinition mref, Type type) {
+        return mref.AttachToGIT(BuildGenericTypeInstance(mref.DeclaringType, type));
     }
     private static bool IsCtor(MethodReference mref) => mref.Name == ".ctor";
 }
