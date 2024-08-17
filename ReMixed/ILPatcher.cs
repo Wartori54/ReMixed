@@ -411,7 +411,7 @@ public class ILPatcher {
     }
 
     // I know this is really bad, and hopefully cecil will add a way to compare TypeReferences, but for the meantime, this is it.
-    private static readonly Func<TypeReference, TypeReference, bool> TypeReferenceEqual =
+    public static readonly Func<TypeReference, TypeReference, bool> TypeReferenceEqual =
         typeof(MetadataResolver).GetMethod("AreSame", BindingFlags.Static | BindingFlags.NonPublic,
             [typeof(TypeReference), typeof(TypeReference)])!.CreateDelegate<Func<TypeReference, TypeReference, bool>>();
 

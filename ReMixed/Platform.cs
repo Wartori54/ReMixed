@@ -6,19 +6,20 @@ namespace ReMixed;
 
 public abstract class PatchPlatform : IDisposable {
 
+    // TODO: Allow multiple simultaneous platforms?
     public static PatchPlatform? Instance { get; private set; }
-    public string Name { get;}
+    public string Name { get; }
 
-    public ThisCecilDefs.IThisCecilDefsProvider ThisCecilDefsProvider;
+    public ThisCecilDefs ThisCecilDefs { get; }
 
     public ILPatcher ILPatcher { get; }
     
     public abstract Func<MethodDefinition, PatchableMethodDefinition> PatchProvider { get; }
 
     protected PatchPlatform(string name, ThisCecilDefs.IThisCecilDefsProvider thisCecilDefsProvider) {
-        ThisCecilDefsProvider = thisCecilDefsProvider;
+        ThisCecilDefs = thisCecilDefsProvider.Get();
         Name = name;
-        ILPatcher = new ILPatcher(thisCecilDefsProvider.Get());
+        ILPatcher = new ILPatcher(ThisCecilDefs);
         if (Instance != null) throw new InvalidOperationException();
         Instance = this;
     }

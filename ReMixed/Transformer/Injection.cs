@@ -4,12 +4,12 @@ using Mono.Cecil.Cil;
 
 namespace ReMixed.Transformer;
 
-public class AbsolutePositionedInjection : MethodBodyTransformer {
+public class AbsolutePositionedInjection : AttributeTargetedMethodBodyTransformer {
     protected override bool MultiTarget { get; }
     private readonly Predicate<Instruction> injectPredicate;
     private bool clearsRetValue;
 
-    private AbsolutePositionedInjection(MethodPatchContext context, Predicate<Instruction> predicate, bool multiMatch, bool clearsReturn) : base(context) {
+    private AbsolutePositionedInjection(MethodPatchContext context, Predicate<Instruction> predicate, bool multiMatch, bool clearsReturn) : base(context, null!) {
         injectPredicate = predicate;
         MultiTarget = multiMatch;
         clearsRetValue = clearsReturn;
@@ -25,10 +25,6 @@ public class AbsolutePositionedInjection : MethodBodyTransformer {
         }
 
         return true;
-    }
-
-    public override void PerformMethod(MethodPatchContext.Cursor cursor, PatchableMethodDefinition patchableMethodDefinition, MethodReference sourceMethod) {
-        
     }
 
     // public override int HandleShift(IPatchContext.Cursor cursor, InjectLocation.Shift shift) {
@@ -53,5 +49,8 @@ public class AbsolutePositionedInjection : MethodBodyTransformer {
             "RETURN" => RETURN,
             _ => null
         };
+    }
+    public override void PerformMethod(MethodPatchContext.Cursor cursor, PatchableMethodDefinition patchableMethodDefinition, MethodReference sourceMethod, CustomAttribute attribute) {
+        throw new NotImplementedException();
     }
 }

@@ -18,12 +18,12 @@ public class InjectTest {
         TestInject();
     }
 
-    public static ILPatcher ILPatcher;
+    // private static ILPatcher ILPatcher;
 
     public static void TestInject() {
 
-        MonoModPlatform mmp = new MonoModPlatform(new DefaultThisCecilDefsProvider());
-        ILPatcher = mmp.ILPatcher; 
+        // MonoModPlatform mmp = new MonoModPlatform(new DefaultThisCecilDefsProvider());
+        // ILPatcher = mmp.ILPatcher; 
         
         
         // ILHook ilHook = MonoModContext.Hook(typeof(InjectTest).GetMethod(nameof(TargetMethod))!, ILModify);
@@ -100,20 +100,20 @@ public class InjectTest {
         // double e = (2.5*d) + 2.4;
     }
 
-    public static void ILModify(MethodPatchContext.LegCursor cursor) {
-        ILPatcher.InjectCallAt<int>(cursor, 
-            new InjectLocation(InjectTarget.FromString("System.Console; void WriteLine(string?)"),
-                true,
-                Idx: 1,
-                ShiftBy: InjectLocation.Shift.BeforeArguments),
-            cursor.Context.ImportMethod(((Delegate)ILModify_Inj1).Method));
-        ILPatcher.InjectCallAt<int>(cursor,
-            new InjectLocation(InjectTarget.FromString("TAIL"), true),
-            cursor.Context.ImportMethod(((Delegate)ILModify_Inj2).Method));
-        
-        MonoModContext.LogAllInstrs(cursor);
-        // cir.Cancel();
-    }
+    // public static void ILModify(MethodPatchContext.LegCursor cursor) {
+    //     ILPatcher.InjectCallAt<int>(cursor, 
+    //         new InjectLocation(InjectTarget.FromString("System.Console; void WriteLine(string?)"),
+    //             true,
+    //             Idx: 1,
+    //             ShiftBy: InjectLocation.Shift.BeforeArguments),
+    //         cursor.Context.ImportMethod(((Delegate)ILModify_Inj1).Method));
+    //     ILPatcher.InjectCallAt<int>(cursor,
+    //         new InjectLocation(InjectTarget.FromString("TAIL"), true),
+    //         cursor.Context.ImportMethod(((Delegate)ILModify_Inj2).Method));
+    //     
+    //     MonoModContext.LogAllInstrs(cursor);
+    //     // cir.Cancel();
+    // }
 
     public static void ILModify_Inj1(ILPatcher.CallbackInfoRet<int> cir) {
         Console.WriteLine("before call :eyes:");
@@ -127,14 +127,14 @@ public class InjectTest {
         cir.Cancel(-100);
     }
 
-    public static void ILModify2(MethodPatchContext.LegCursor cursor) {
-        ILPatcher.InjectCallAt(cursor, new InjectLocation(InjectTarget.FromString("ReMixed.Tests.InjectTest; object AmazingTargetMethod(ReMixed.Tests.InjectTest.TestDelegate, System.Func<int, System.List<int>>, string)"), 
-                false, InjectLocation.Shift.BeforeArguments),
-            cursor.Context.ImportMethod(((Delegate)ILModify2_Inj1).Method));
-        ILPatcher.InjectCallAt(cursor, new InjectLocation(InjectTarget.FromString("TAIL"), true),
-            cursor.Context.ImportMethod(((Delegate)ILModify2_Inj2).Method));
-        MonoModContext.LogAllInstrs(cursor);
-    }
+    // public static void ILModify2(MethodPatchContext.LegCursor cursor) {
+    //     ILPatcher.InjectCallAt(cursor, new InjectLocation(InjectTarget.FromString("ReMixed.Tests.InjectTest; object AmazingTargetMethod(ReMixed.Tests.InjectTest.TestDelegate, System.Func<int, System.List<int>>, string)"), 
+    //             false, InjectLocation.Shift.BeforeArguments),
+    //         cursor.Context.ImportMethod(((Delegate)ILModify2_Inj1).Method));
+    //     ILPatcher.InjectCallAt(cursor, new InjectLocation(InjectTarget.FromString("TAIL"), true),
+    //         cursor.Context.ImportMethod(((Delegate)ILModify2_Inj2).Method));
+    //     MonoModContext.LogAllInstrs(cursor);
+    // }
     
     public static void ILModify2_Inj1(ILPatcher.CallbackInfo ci) {
         Console.WriteLine("BEFORE THE THINGGG");
@@ -151,15 +151,15 @@ public class InjectTest {
         ci.Cancel();
     }
 
-    public static void ILModify3(MethodPatchContext.LegCursor cursor) {
-        TestClass t = new();
-        MethodReference mRef = cursor.Context.ImportMethod(((Delegate)t.ArgTestMethod).Method);
-        MethodDefinition mDef = mRef.Resolve();
-        Console.WriteLine(mDef.IsStatic);
-        ILPatcher.InjectCallAt(cursor, new InjectLocation(InjectTarget.FromString("HEAD"), false), 
-            cursor.Context.ImportMethod(((Delegate) ILModify3_Inj).Method));
-        MonoModContext.LogAllInstrs(cursor);
-    }
+    // public static void ILModify3(MethodPatchContext.LegCursor cursor) {
+    //     TestClass t = new();
+    //     MethodReference mRef = cursor.Context.ImportMethod(((Delegate)t.ArgTestMethod).Method);
+    //     MethodDefinition mDef = mRef.Resolve();
+    //     Console.WriteLine(mDef.IsStatic);
+    //     ILPatcher.InjectCallAt(cursor, new InjectLocation(InjectTarget.FromString("HEAD"), false), 
+    //         cursor.Context.ImportMethod(((Delegate) ILModify3_Inj).Method));
+    //     MonoModContext.LogAllInstrs(cursor);
+    // }
 
     public static void ILModify3_Inj(ILPatcher.CallbackInfo ci, TestClass _this, int a, string b, Func<int, string> c) {
         Console.WriteLine("Pre running the func: " + c(a));
@@ -210,11 +210,15 @@ public class InjectTest {
         return f.Invoke(t.Invoke(s));
     }
 
-    public static void ILModify4(MethodPatchContext.LegCursor cursor) {
-        ILPatcher.InjectCallAt(cursor, new InjectLocation(InjectTarget.FromString("RETURN"), true), cursor.Context.ImportMethod(((Delegate)ILModify4_Inj1).Method));
-        ILPatcher.InjectCallAt(cursor, new InjectLocation(InjectTarget.FromString("RETURN"), true), cursor.Context.ImportMethod(((Delegate)ILModify4_Inj1).Method));
-        MonoModContext.LogAllInstrs(cursor);
-    }
+    // public static void ILModify4(MethodPatchContext.LegCursor cursor) {
+    //     ILPatcher.InjectCallAt(cursor, new InjectLocation(InjectTarget.FromString("RETURN"), true), cursor.Context.ImportMethod(((Delegate)ILModify4_Inj1).Method));
+    //     ILPatcher.InjectCallAt(cursor, new InjectLocation(InjectTarget.FromString("RETURN"), true), cursor.Context.ImportMethod(((Delegate)ILModify4_Inj1).Method));
+    //     MonoModContext.LogAllInstrs(cursor);
+    // // public static void ILModify4(MethodPatchContext.LegCursor cursor) {
+    //     ILPatcher.InjectCallAt(cursor, new InjectLocation(InjectTarget.FromString("RETURN"), true), cursor.Context.ImportMethod(((Delegate)ILModify4_Inj1).Method));
+    //     ILPatcher.InjectCallAt(cursor, new InjectLocation(InjectTarget.FromString("RETURN"), true), cursor.Context.ImportMethod(((Delegate)ILModify4_Inj1).Method));
+    //     MonoModContext.LogAllInstrs(cursor);
+    // }}
 
     public static void ILModify4_Inj1(ILPatcher.CallbackInfo ci, int a) {
         Console.WriteLine("BEF RET!");

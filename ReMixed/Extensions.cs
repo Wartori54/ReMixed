@@ -507,4 +507,27 @@ public static class Extensions {
             CallingConvention = MethodCallingConvention.Generic
         };
     }
+
+    public static string? GetCecilFullName(this Type type) {
+        // This is probably not it.
+        return type.FullName?.Replace("+", "/");
+    }
+
+    public static string GetReflectionFullName(this TypeReference type) {
+        return type.FullName.Replace("/", "+");
+    }
+
+    // TODO: maybe clear this eventually, or move to the patchplatform
+    private static Dictionary<TypeReference, TypeReference> baseTypeCache = new();
+    public static TypeReference? GetBaseTypeCached(this TypeReference typeReference) {
+        if (baseTypeCache.TryGetValue(typeReference, out TypeReference? baseType)) {
+            return baseType;
+        }
+
+        TypeDefinition? typeDef = typeReference.Resolve();
+
+        return typeDef?.BaseType;
+    }
+    
+    
 }

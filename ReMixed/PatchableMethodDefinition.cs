@@ -34,6 +34,7 @@ public class PatchableMethodDefinition : IMemberDefinition {
     }
 
     private readonly MethodDefinition patchingMethod;
+    public MethodReference Reference => patchingMethod;
     public ReadOnlyCollection<Instruction> Instructions { get; }
 
     private readonly Dictionary<int, List<Blob>> injections = new();
