@@ -3,7 +3,7 @@ using System;
 namespace ReMixed.Positioning;
 
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = true)]
-public class At(
+public class AtAttribute(
     // Positioner used
     string value
 ) : Attribute {

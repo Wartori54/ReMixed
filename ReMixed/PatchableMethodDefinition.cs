@@ -6,13 +6,15 @@ using Mono.Collections.Generic;
 
 namespace ReMixed;
 
-public class PatchableMethodDefinition : IMemberDefinition {
+public class PatchableMethodDefinition : IMemberDefinition, IMethodSignature, IGenericParameterProvider {
     public MetadataToken MetadataToken {
         get => throw new NotSupportedException();
         set => throw new NotSupportedException();
     }
 
-    public Collection<CustomAttribute> CustomAttributes => patchingMethod.CustomAttributes;
+    private readonly ReadOnlyCollection<CustomAttribute> customAttributes;
+
+    public Collection<CustomAttribute> CustomAttributes => customAttributes;
     public bool HasCustomAttributes => patchingMethod.HasCustomAttributes;
     public string Name {
         get => patchingMethod.Name;
@@ -33,20 +35,62 @@ public class PatchableMethodDefinition : IMemberDefinition {
         set => throw new NotSupportedException();
     }
 
+    public bool HasThis {
+        get => patchingMethod.HasThis;
+        set => throw new NotSupportedException();
+    }
+    
+    public bool ExplicitThis {
+        get => patchingMethod.ExplicitThis; 
+        set => throw new NotSupportedException();
+    }
+
+    public MethodCallingConvention CallingConvention {
+        get => patchingMethod.CallingConvention;
+        set => throw new NotSupportedException();
+    }
+    
+    public bool HasParameters => patchingMethod.HasParameters;
+
+    private readonly ReadOnlyCollection<ParameterDefinition> parameters;
+    public Collection<ParameterDefinition> Parameters => parameters;
+
+    TypeReference IMethodSignature.ReturnType {
+        get => patchingMethod.ReturnType;
+        set => throw new NotSupportedException();
+    }
+    
+    public MethodReturnType MethodReturnType => patchingMethod.MethodReturnType;
+    
+    public TypeReference ReturnType => patchingMethod.ReturnType;
+
+
+
+    public bool HasGenericParameters => patchingMethod.HasGenericParameters;
+    public bool IsDefinition => patchingMethod.IsDefinition;
+    public ModuleDefinition Module => throw new NotSupportedException();
+    private readonly ReadOnlyCollection<GenericParameter> genericParameters;
+    public Collection<GenericParameter> GenericParameters => genericParameters;
+    public GenericParameterType GenericParameterType => GenericParameterType.Method; // We are patching methods
+    
     private readonly MethodDefinition patchingMethod;
+    
     public MethodReference Reference => patchingMethod;
     public ReadOnlyCollection<Instruction> Instructions { get; }
 
     private readonly Dictionary<int, List<Blob>> injections = new();
 
 
-    public static PatchableMethodDefinition FromMethodDef(MethodDefinition methodDefinition) {
-        return PatchPlatform.Instance!.PatchProvider(methodDefinition);
+    public static PatchableMethodDefinition FromMethodDef(MethodDefinition methodDefinition, MethodPatchContext context) {
+        return context.Platform.PatchableMethodPool.Obtain(methodDefinition);
     }
     
     protected PatchableMethodDefinition(MethodDefinition methodDefinition) {
         patchingMethod = methodDefinition;
         Instructions = new ReadOnlyCollection<Instruction>(methodDefinition.Body.Instructions);
+        customAttributes = new ReadOnlyCollection<CustomAttribute>(methodDefinition.CustomAttributes);
+        parameters = new ReadOnlyCollection<ParameterDefinition>(methodDefinition.Parameters);
+        genericParameters = new ReadOnlyCollection<GenericParameter>(methodDefinition.GenericParameters);
     }
 
     public MethodPatchContext.Positioner AcquirePositioner() {
@@ -73,6 +117,10 @@ public class PatchableMethodDefinition : IMemberDefinition {
         blobs.Add(blob);
         MethodPatchContext.Cursor cursor = new(blob.Instructions, GetBodyProvider());
         return cursor;
+    }
+
+    public void Apply() {
+        
     }
 
     protected virtual CollectionILProcessor.IBodyDataProvider GetBodyProvider() {
@@ -127,4 +175,9 @@ public class PatchableMethodDefinition : IMemberDefinition {
         
         public bool HasThis => methodDefinition.HasThis;
     }
+
+    public interface IMethodPool {
+        public PatchableMethodDefinition Obtain(MethodDefinition methodDefinition);
+    }
+
 }

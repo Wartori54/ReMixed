@@ -9,17 +9,17 @@ using MethodBody = Mono.Cecil.Cil.MethodBody;
 
 namespace ReMixed.PlatformImpls;
 
-public class MonoModContext : MethodPatchContext {
+public class MonoModPatchContext : MethodPatchContext {
     private readonly ILContext mmContext;
     private readonly MethodBase? origMethod;
 
     private MethodDefinition? origMethodDef;
 
-    private MonoModContext(ILContext ctx) : base(ctx.Method) {
+    private MonoModPatchContext(ILContext ctx, PatchPlatform platform) : base(ctx.Method, platform) {
         mmContext = ctx;
     }
 
-    public MonoModContext(ILContext ctx, MethodBase origMethodBase) : this(ctx) {
+    public MonoModPatchContext(ILContext ctx, MethodBase origMethodBase, PatchPlatform platform) : this(ctx, platform) {
         origMethod = origMethodBase;
     }
 

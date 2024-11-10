@@ -561,12 +561,19 @@ public class ILPatcher {
     public class CallbackInfo {
         private readonly bool cancelable;
         private bool cancelled;
+        public string Caller { get; }
 
         // This is called from injected code
         // ReSharper disable once MemberCanBeProtected.Global
-        public CallbackInfo(bool cancelable = false) {
+        // public CallbackInfo(bool cancelable = false) {
+        //     this.cancelable = cancelable;
+        //     cancelled = false;
+        // }
+
+        // Make sure there's always a single ctor here
+        public CallbackInfo(string caller, bool cancelable = false) {
+            Caller = caller;
             this.cancelable = cancelable;
-            cancelled = false;
         }
 
         public virtual void Cancel() {
@@ -582,9 +589,10 @@ public class ILPatcher {
 
     public class CallbackInfoRet<T> : CallbackInfo {
         private T? retValue;
+        private bool hasRetValue;
 
-        // This always will cancel
-        public CallbackInfoRet() : base(true) {
+        // Make sure there's always a single ctor here
+        public CallbackInfoRet(string caller, bool cancellable = false) : base(caller, cancellable) {
         }
 
         public override void Cancel() {
@@ -602,10 +610,11 @@ public class ILPatcher {
         // ReSharper disable once MemberCanBePrivate.Global
         public void SetReturnValue(T value) {
             retValue = value;
+            hasRetValue = true;
         }
 
-        public T GetRet() {
-            if (retValue == null) throw new InvalidOperationException("Cannot return without a return value!");
+        public T? GetRet() {
+            if (!hasRetValue) throw new InvalidOperationException("Cannot return without a return value!");
             return retValue;
         }
     }

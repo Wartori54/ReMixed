@@ -18,7 +18,7 @@ public class DeferredMonoModPlatform : MonoModPlatform {
     public void ApplyAll() {
         patches.AllMethods(mb => {
             hooks.Add(new ILHook(mb, ctx => {
-                MonoModContext mmCtx = new(ctx, mb);
+                MonoModPatchContext mmCtx = new(ctx, mb, this);
                 patches.RunPatchesFor(mb, mmCtx.GetCursor());
                 // MethodPatchContext.LogAllInstrs(mmCtx);
                 // try {

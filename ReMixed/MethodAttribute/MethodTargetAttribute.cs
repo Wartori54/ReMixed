@@ -8,7 +8,7 @@ namespace ReMixed.MethodAttribute;
 /// <param name="methodTarget">The name.</param>
 /// <remarks>It is mandatory for subclasses to have this argument as the first in the constructor.</remarks>
 [AttributeUsage(AttributeTargets.Method, Inherited = true, AllowMultiple = true)]
-public class MethodTargetAttribute(string methodTarget) : System.Attribute {
+public class MethodTargetAttribute(string methodTarget) : Attribute {
     // Target name for the injection
     public string MethodTarget { get; } = methodTarget;
 }

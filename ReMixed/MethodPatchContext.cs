@@ -12,6 +12,7 @@ using MethodBody = Mono.Cecil.Cil.MethodBody;
 namespace ReMixed;
 
 public abstract class MethodPatchContext {
+    public PatchPlatform Platform { get; }
 
     private readonly MethodDefinition method;
     public MethodDefinition Method => method;
@@ -24,8 +25,9 @@ public abstract class MethodPatchContext {
     public InjectionTracker InjectionTracker =>
         injectionTracker ??= new InjectionTracker(GetRealMethod().Body, StAnalysis);
 
-    protected MethodPatchContext(MethodDefinition patchingMethod) {
+    protected MethodPatchContext(MethodDefinition patchingMethod, PatchPlatform platform) {
         method = patchingMethod;
+        Platform = platform;
     }
 
     protected abstract Func<object, MethodBody, Collection<Instruction>, object>? GetStAnalysisConverter();
@@ -205,6 +207,11 @@ public abstract class MethodPatchContext {
         // public Cursor EmitNewobj(MethodBase ctor);
         public Cursor EmitLdtoken(TypeReference type) {
             Emit(il.Create(OpCodes.Ldtoken, type));
+            return this;
+        }
+
+        public Cursor EmitLdstr(string s) {
+            Emit(il.Create(OpCodes.Ldstr, s));
             return this;
         }
 

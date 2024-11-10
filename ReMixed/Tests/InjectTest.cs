@@ -260,7 +260,7 @@ public class InjectTest {
 
     public static int TestCIRMethod() {
         List<int> a = [2];
-        ILPatcher.CallbackInfoRet<int> cir = new();
+        ILPatcher.CallbackInfoRet<int> cir = new("");
         {
             cir.Cancel(2);
         }

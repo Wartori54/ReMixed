@@ -528,6 +528,31 @@ public static class Extensions {
 
         return typeDef?.BaseType;
     }
+
+    public static Attribute? Instantiate(this CustomAttribute attr) {
+        Type? attrType = Type.GetType(attr.AttributeType.GetReflectionFullName());
+        if (attrType == null) return null;
+        object[] ctorParams = attr.ConstructorArguments.Select(arg => arg.Value).ToArray();
+        object? attrObj = Activator.CreateInstance(attrType, ctorParams);
+        if (attrObj == null) return null;
+
+        foreach (CustomAttributeNamedArgument prop in attr.Properties) {
+            (attrType.GetProperty(prop.Name) ?? throw new Exception($"Could not find property {prop.Name} in attribute {attrType.FullName}"))
+                .SetValue(attrObj, prop.Argument.Value);
+        }
+        
+        foreach (CustomAttributeNamedArgument field in attr.Fields) {
+            (attrType.GetField(field.Name) ?? throw new Exception($"Could not find property {field.Name} in attribute {attrType.FullName}"))
+                .SetValue(attrObj, field.Argument.Value);
+        }
+
+        return attrObj as Attribute;
+    }
+
+    public static TV GetOrThrow<TK, TV>(this Dictionary<TK, TV> dict, TK key, string msg) where TK : notnull {
+        if (!dict.TryGetValue(key, out TV? value)) throw new Exception(msg);
+        return value;
+    }
     
     
 }

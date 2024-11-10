@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Reflection;
 using Mono.Cecil;
+using ReMixed.Positioning;
 
 namespace ReMixed;
 
@@ -27,14 +28,29 @@ public class ThisCecilDefs {
 
     public readonly MethodDefinition CIIsCanceled;
     private MethodDefinition CIRGetRet;
+    private MethodDefinition CIRSetReturnValue;
 
     public MethodReference CIRCtorT<T>() {
-        return BuildGenericTypeMethod(CIRCtor, typeof(T));
+        return CIRCtorT(typeof(T));
+    }
+
+    public MethodReference CIRCtorT(Type type) {
+        return BuildGenericTypeMethod(CIRCtor, type);
+    }
+
+    public MethodReference CIRCtorT(TypeReference type) {
+        return BuildGenericTypeMethod(CIRCtor, type);
     }
 
     public MethodReference CIRGetRetT<T>() {
         return BuildGenericTypeMethod(CIRGetRet, typeof(T));
     }
+    
+    public MethodReference CIRSetReturnValueT<T>() {
+        return BuildGenericTypeMethod(CIRSetReturnValue, typeof(T));
+    }
+
+    public readonly TypeReference AtAttribute;
     
     public ThisCecilDefs(ModuleDefinition moduleDefinition) {
         ThisModule = moduleDefinition;
@@ -43,7 +59,9 @@ public class ThisCecilDefs {
         CICtor = CIReference.Methods.First(IsCtor);
         CIRCtor = CIRReference.Methods.First(IsCtor);
         CIIsCanceled = CIReference.Methods.First(m => m.Name == nameof(ILPatcher.CallbackInfo.IsCanceled));
-        CIRGetRet = CIRReference.Methods.First(m => m.Name == nameof(ILPatcher.CallbackInfoRet<int>.GetRet));
+        CIRGetRet = CIRReference.Methods.First(m => m.Name == nameof(ILPatcher.CallbackInfoRet<int>.GetRet)); // int is used as a place holder here
+        CIRSetReturnValue = CIRReference.Methods.First(m => m.Name == nameof(ILPatcher.CallbackInfoRet<int>.SetReturnValue));
+        AtAttribute = ThisModule.GetType(typeof(AtAttribute));
     }
 
     private GenericInstanceType BuildGenericTypeInstance(TypeReference tref, Type type) => BuildGenericTypeInstance(tref, tref.Module.ImportReference(type));
@@ -55,6 +73,10 @@ public class ThisCecilDefs {
     }
 
     private MethodReference BuildGenericTypeMethod(MethodDefinition mref, Type type) {
+        return mref.AttachToGIT(BuildGenericTypeInstance(mref.DeclaringType, type));
+    }
+
+    private MethodReference BuildGenericTypeMethod(MethodDefinition mref, TypeReference type) {
         return mref.AttachToGIT(BuildGenericTypeInstance(mref.DeclaringType, type));
     }
     private static bool IsCtor(MethodReference mref) => mref.Name == ".ctor";
