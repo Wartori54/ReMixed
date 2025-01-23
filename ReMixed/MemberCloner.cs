@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Microsoft.CodeAnalysis;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
@@ -31,7 +32,7 @@ public static class MemberCloner {
 
     public static EventDefinition Clone(this EventDefinition source) {
         // TODO: Copy CustomAttributes
-        EventDefinition copy = new EventDefinition(source.Name, source.Attributes, source.EventType) {
+        EventDefinition copy = new(source.Name, source.Attributes, source.EventType) {
             IsSpecialName = source.IsSpecialName,
             IsRuntimeSpecialName = source.IsRuntimeSpecialName,
             AddMethod = source.AddMethod,
@@ -46,34 +47,81 @@ public static class MemberCloner {
 
     public static MethodDefinition Clone(this MethodDefinition source) {
         // TODO: Copy CustomAttributes
-        MethodDefinition copy = new MethodDefinition(source.Name, source.Attributes, source.ReturnType) {
+        MethodDefinition copy = new(source.Name, source.Attributes, source.ReturnType) {
             IsSpecialName = source.IsSpecialName,
             IsRuntimeSpecialName = source.IsRuntimeSpecialName,
             MethodReturnType = source.MethodReturnType,
             Body = source.Body.Clone(),
             CallingConvention = source.CallingConvention,
             ImplAttributes = source.ImplAttributes,
-            DebugInformation = source.DebugInformation.Clone(),
+            DebugInformation = source.DebugInformation/*.Clone()*/, // TODO
             SemanticsAttributes = source.SemanticsAttributes,
             PInvokeInfo = source.PInvokeInfo,
         };
+        
         foreach (MethodReference @override in source.Overrides) {
             copy.Overrides.Add(@override);
         }
+        
         foreach (ParameterDefinition parameter in source.Parameters) {
             copy.Parameters.Add(parameter);
         }
+        
         foreach (GenericParameter genericParameter in source.GenericParameters) {
             copy.GenericParameters.Add(genericParameter);
         }
+        
         foreach (CustomDebugInformation customDebugInformation in source.CustomDebugInformations) {
-            copy.CustomDebugInformations.Add(customDebugInformation.Clone());
+            copy.CustomDebugInformations.Add(customDebugInformation);
         }
         // TODO
         // foreach (SecurityDeclaration securityDeclaration in source.SecurityDeclarations) {
         //     copy.SecurityDeclarations.Add(securityDeclaration);
         // }
+
+        return copy;
+    }
+
+    public static MethodBody Clone(this MethodBody source, MethodDefinition owner) {
+        MethodBody copy = new(owner) {
+            InitLocals = source.InitLocals,
+            MaxStackSize = source.MaxStackSize,
+            
+            /*LocalVarToken = source.LocalVarToken,*/ // Dont copy this
+        };
         
+        foreach (VariableDefinition variable in source.Variables) {
+            copy.Variables.Add(variable);
+        }
+
+        Dictionary<Instruction, Action<Instruction>> exhHandlerInstrReplacer = new();
+        foreach (ExceptionHandler exceptionHandler in source.ExceptionHandlers) {
+            ExceptionHandler newExhHandler = new(exceptionHandler.HandlerType);
+            copy.ExceptionHandlers.Add(newExhHandler);
+            
+            if (exceptionHandler.TryStart != null)
+                exhHandlerInstrReplacer[exceptionHandler.TryStart] = i => newExhHandler.TryStart = i;
+            if (exceptionHandler.TryEnd != null)
+                exhHandlerInstrReplacer[exceptionHandler.TryEnd] = i => newExhHandler.TryEnd = i;
+            if (exceptionHandler.FilterStart != null)
+                exhHandlerInstrReplacer[exceptionHandler.FilterStart] = i => newExhHandler.FilterStart = i;
+            if (exceptionHandler.HandlerStart != null)
+                exhHandlerInstrReplacer[exceptionHandler.HandlerStart] = i => newExhHandler.HandlerStart = i;
+            if (exceptionHandler.HandlerEnd != null)
+                exhHandlerInstrReplacer[exceptionHandler.HandlerEnd] = i => newExhHandler.HandlerEnd = i;
+            
+            newExhHandler.CatchType = exceptionHandler.CatchType;
+        }
+
+        foreach (Instruction instruction in source.Instructions) {
+            Instruction newInstr = Instruction.Create(instruction.OpCode);
+            newInstr.Offset = instruction.Offset;
+            newInstr.Operand = instruction.Operand;
+            if (exhHandlerInstrReplacer.TryGetValue(instruction, out Action<Instruction>? handler)) {
+                handler.Invoke(newInstr);
+            }
+            copy.Instructions.Add(newInstr);
+        }
     }
 
 

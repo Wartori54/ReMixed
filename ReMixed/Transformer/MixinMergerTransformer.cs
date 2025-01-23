@@ -162,7 +162,7 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
     private void CopyMethod(TypeDefinition dest, MethodDefinition src) {
         if (IndexType(dest).Identifiers.Contains(src.Name)) throw new Exception($"Method with identifier {src.FullName} already present in type {dest.FullName}");
         MethodDefinition copy = src.Clone();
-        // Relink: ret value, parameters, overrides, gparameters
+        // Relink: ret value, parameters, overrides, gparameters, mbody's (this param, variables)
     }
 
     private void AddToRelinkTargets(TypeReference typeRef, IMemberDefinition member) {
