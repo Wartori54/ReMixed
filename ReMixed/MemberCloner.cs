@@ -1,23 +1,20 @@
 using System;
 using System.Collections.Generic;
-using Microsoft.CodeAnalysis;
+using System.Diagnostics.Tracing;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
-using MonoMod.Utils;
 
 namespace ReMixed;
 
 public static class MemberCloner {
     public static FieldDefinition Clone(this FieldDefinition source) {
-        // TODO: Copy CustomAttributes
         return new FieldDefinition(source.Name, source.Attributes, source.FieldType) {
             IsSpecialName = source.IsSpecialName,
-            IsRuntimeSpecialName = source.IsRuntimeSpecialName
-        };
+            IsRuntimeSpecialName = source.IsRuntimeSpecialName,
+        }.CloneCustomAttributes(source);
     }
 
     public static PropertyDefinition Clone(this PropertyDefinition source) {
-        // TODO: Copy CustomAttributes
         PropertyDefinition copy = new(source.Name, source.Attributes, source.PropertyType) {
             IsSpecialName = source.IsSpecialName,
             IsRuntimeSpecialName = source.IsRuntimeSpecialName,
@@ -27,11 +24,10 @@ public static class MemberCloner {
         foreach (MethodDefinition m in source.OtherMethods) {
             copy.OtherMethods.Add(m);
         }
-        return copy;
+        return copy.CloneCustomAttributes(source);
     }
 
     public static EventDefinition Clone(this EventDefinition source) {
-        // TODO: Copy CustomAttributes
         EventDefinition copy = new(source.Name, source.Attributes, source.EventType) {
             IsSpecialName = source.IsSpecialName,
             IsRuntimeSpecialName = source.IsRuntimeSpecialName,
@@ -42,16 +38,15 @@ public static class MemberCloner {
         foreach (MethodDefinition m in source.OtherMethods) {
             copy.OtherMethods.Add(m);
         }
-        return copy;
+        return copy.CloneCustomAttributes(source);
     }
 
     public static MethodDefinition Clone(this MethodDefinition source) {
-        // TODO: Copy CustomAttributes
         MethodDefinition copy = new(source.Name, source.Attributes, source.ReturnType) {
             IsSpecialName = source.IsSpecialName,
             IsRuntimeSpecialName = source.IsRuntimeSpecialName,
             MethodReturnType = source.MethodReturnType,
-            Body = source.Body.Clone(),
+            // Body = source.Body.Clone(),
             CallingConvention = source.CallingConvention,
             ImplAttributes = source.ImplAttributes,
             DebugInformation = source.DebugInformation/*.Clone()*/, // TODO
@@ -64,22 +59,24 @@ public static class MemberCloner {
         }
         
         foreach (ParameterDefinition parameter in source.Parameters) {
-            copy.Parameters.Add(parameter);
+            copy.Parameters.Add(parameter.Clone());
         }
         
         foreach (GenericParameter genericParameter in source.GenericParameters) {
-            copy.GenericParameters.Add(genericParameter);
+            copy.GenericParameters.Add(genericParameter.Clone(copy, pair: false));
         }
         
         foreach (CustomDebugInformation customDebugInformation in source.CustomDebugInformations) {
             copy.CustomDebugInformations.Add(customDebugInformation);
         }
+        
+        copy.Body = source.Body.Clone(copy);
         // TODO
         // foreach (SecurityDeclaration securityDeclaration in source.SecurityDeclarations) {
         //     copy.SecurityDeclarations.Add(securityDeclaration);
         // }
 
-        return copy;
+        return copy.CloneCustomAttributes(source);
     }
 
     public static MethodBody Clone(this MethodBody source, MethodDefinition owner) {
@@ -87,11 +84,14 @@ public static class MemberCloner {
             InitLocals = source.InitLocals,
             MaxStackSize = source.MaxStackSize,
             
+            // ThisParameter is already handled by cecil itself
             /*LocalVarToken = source.LocalVarToken,*/ // Dont copy this
         };
         
+        // Even though `varDef.Clone()` doesn't assign the index, adding it here will
+        // thus it will match the original ones
         foreach (VariableDefinition variable in source.Variables) {
-            copy.Variables.Add(variable);
+            copy.Variables.Add(variable.Clone());
         }
 
         Dictionary<Instruction, Action<Instruction>> exhHandlerInstrReplacer = new();
@@ -113,15 +113,137 @@ public static class MemberCloner {
             newExhHandler.CatchType = exceptionHandler.CatchType;
         }
 
+        List<(int ciidx, Instruction targetInstr)> instrsToReplace = [];
+        List<(List<(int ciidx, int idx)>, Instruction targetInstr)> instrsListsToReplace = [];
+        int iidx = 0;
         foreach (Instruction instruction in source.Instructions) {
             Instruction newInstr = Instruction.Create(instruction.OpCode);
             newInstr.Offset = instruction.Offset;
-            newInstr.Operand = instruction.Operand;
+            object? newOperand;
+            switch (instruction.Operand) {
+                case string:
+                case sbyte:
+                case byte:
+                case int:
+                case long:
+                case float:
+                case double:
+                case null:
+                    newOperand = instruction.Operand;
+                    break;
+                case VariableReference v:
+                    newOperand = copy.Variables[v.Index];
+                    break;
+                case ParameterReference p:
+                    newOperand = copy.Method.Parameters[p.Index];
+                    break;
+                case Instruction i: {
+                    int ciidx = source.Instructions.IndexOf(i);
+                    if (ciidx < iidx) {
+                        newOperand = copy.Instructions[ciidx];
+                    } else {
+                        instrsToReplace.Add((ciidx, newInstr));
+                        newOperand = null;
+                    }
+                    break;
+                }
+                case Instruction[] iis: {
+                    Instruction[] newInstrs = new Instruction[iis.Length];
+                    List<(int ciidx, int idx)> rps = [];
+                    for (int idx = 0; idx < iis.Length; idx++) {
+                        Instruction i = iis[idx];
+                        int ciidx = source.Instructions.IndexOf(i);
+                        if (ciidx < iidx) {
+                            newInstrs[idx] = copy.Instructions[ciidx];
+                        } else {
+                            rps.Add((ciidx, idx));
+                        }
+                    }
+                    if (rps.Count != 0)
+                        instrsListsToReplace.Add((rps, newInstr));
+                    newOperand = newInstrs;
+                    break;
+                }
+                case TypeReference: // All of these will be relinked in the later pass
+                case FieldReference:
+                case MethodReference:
+                case CallSite:
+                    newOperand = instruction.Operand;
+                    break;
+                default:
+                    throw new NotSupportedException("Unknown operand of type: " + instruction.Operand.GetType());
+            }
+            
+            newInstr.Operand = newOperand;
             if (exhHandlerInstrReplacer.TryGetValue(instruction, out Action<Instruction>? handler)) {
                 handler.Invoke(newInstr);
             }
             copy.Instructions.Add(newInstr);
+            iidx++;
         }
+
+        foreach ((int ciidx, Instruction targetInstr) in instrsToReplace) {
+            targetInstr.Operand = copy.Instructions[ciidx];
+        }
+
+        foreach ((List<(int ciidx, int idx)>? valueTuples, Instruction targetInstr) in instrsListsToReplace) {
+            Instruction[] op = targetInstr.Operand as Instruction[] ?? throw new InvalidOperationException();
+            foreach ((int ciidx, int idx) in valueTuples) {
+                op[idx] = copy.Instructions[ciidx];
+            }
+        }
+
+        return copy;
+    }
+
+    public static VariableDefinition Clone(this VariableDefinition source) {
+        return new VariableDefinition(source.VariableType);
+    }
+
+    public static ParameterDefinition Clone(this ParameterDefinition source) {
+        return new ParameterDefinition(source.Name, source.Attributes, source.ParameterType).CloneCustomAttributes(source);
+    }
+
+    public static InterfaceImplementation Clone(this InterfaceImplementation source) {
+        return new InterfaceImplementation(source.InterfaceType).CloneCustomAttributes(source);
+    }
+
+    public static GenericParameter Clone(this GenericParameter source, IGenericParameterProvider dest, bool pair = true) {
+        if (pair && source.Position < dest.GenericParameters.Count) {
+            return dest.GenericParameters[source.Position];
+        }
+        GenericParameter copy = new(source.Name, dest) {
+            Attributes = source.Attributes,
+        };
+
+        foreach (GenericParameterConstraint constraint in source.Constraints) {
+            copy.Constraints.Add(new GenericParameterConstraint(constraint.ConstraintType).CloneCustomAttributes(constraint));
+        }
+        
+        return copy.CloneCustomAttributes(source);
+    }
+
+    public static T CloneCustomAttributes<T>(this T dest, T source) where T : ICustomAttributeProvider {
+        foreach (CustomAttribute customAttribute in source.CustomAttributes) {
+            dest.CustomAttributes.Add(customAttribute.Clone());
+        }
+        return dest;
+    }
+
+    // TODO: This is not good enough...
+    public static CustomAttribute Clone(this CustomAttribute source) {
+        CustomAttribute copy = new CustomAttribute(source.Constructor);
+        foreach (CustomAttributeArgument customAttributeArgument in source.ConstructorArguments) {
+            copy.ConstructorArguments.Add(customAttributeArgument);
+        }
+        foreach (CustomAttributeNamedArgument field in source.Fields) {
+            copy.Fields.Add(field);
+        }
+        foreach (CustomAttributeNamedArgument property in source.Properties) {
+            copy.Properties.Add(property);
+        }
+
+        return copy;
     }
 
 

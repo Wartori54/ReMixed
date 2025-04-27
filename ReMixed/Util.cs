@@ -73,4 +73,13 @@ public class Util {
         object? attrObj = Activator.CreateInstance(attrType, args);
         return attrObj as Attribute;
     }
+
+    public static Predicate<T> ToOneShot<T>(Predicate<T> predicate) {
+        bool hasSucceeded = false;
+        return o => {
+            if (!hasSucceeded && !predicate(o)) return false;
+            hasSucceeded = true;
+            return true;
+        };
+    }
 }

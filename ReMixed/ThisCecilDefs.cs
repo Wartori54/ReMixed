@@ -50,6 +50,7 @@ public class ThisCecilDefs {
         return BuildGenericTypeMethod(CIRSetReturnValue, typeof(T));
     }
 
+    public readonly TypeReference MixinAttribute;
     public readonly TypeReference AtAttribute;
     
     public ThisCecilDefs(ModuleDefinition moduleDefinition) {
@@ -62,6 +63,7 @@ public class ThisCecilDefs {
         CIRGetRet = CIRReference.Methods.First(m => m.Name == nameof(ILPatcher.CallbackInfoRet<int>.GetRet)); // int is used as a place holder here
         CIRSetReturnValue = CIRReference.Methods.First(m => m.Name == nameof(ILPatcher.CallbackInfoRet<int>.SetReturnValue));
         AtAttribute = ThisModule.GetType(typeof(AtAttribute));
+        MixinAttribute = ThisModule.GetType(typeof(MixinAttribute));
     }
 
     private GenericInstanceType BuildGenericTypeInstance(TypeReference tref, Type type) => BuildGenericTypeInstance(tref, tref.Module.ImportReference(type));
