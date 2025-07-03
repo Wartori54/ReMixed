@@ -11,8 +11,8 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
     private readonly RelinkMap<TypeReference> typeRelinker;
     private readonly RelinkMap<FieldReference> fieldRelinker;
     private readonly RelinkMap<MethodReference> methodRelinker;
-    private readonly RelinkMap<PropertyReference> propertyRelinker;
-    private readonly RelinkMap<EventReference> eventRelinker;
+    // private readonly RelinkMap<PropertyReference> propertyRelinker;
+    // private readonly RelinkMap<EventReference> eventRelinker;
 
     // Rather than forcing dicts into here, allow delegates to do so, for flexibility
     // (hopefully the runtime will be smart enough to inline stuff here...)
@@ -21,15 +21,15 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
     public RelinkerProcessor(
         RelinkMap<TypeReference> typeRelinker,
         RelinkMap<FieldReference> fieldRelinker,
-        RelinkMap<MethodReference> methodRelinker,
-        RelinkMap<PropertyReference> propertyRelinker,
-        RelinkMap<EventReference> eventRelinker
+        RelinkMap<MethodReference> methodRelinker
+        // RelinkMap<PropertyReference> propertyRelinker,
+        // RelinkMap<EventReference> eventRelinker
         ) {
         this.typeRelinker = typeRelinker;
         this.fieldRelinker = fieldRelinker;
         this.methodRelinker = methodRelinker;
-        this.propertyRelinker = propertyRelinker;
-        this.eventRelinker = eventRelinker;
+        // this.propertyRelinker = propertyRelinker;
+        // this.eventRelinker = eventRelinker;
     }
     
     // There isn't any good ways to know if this has to be relinked ahead of time so just
@@ -103,14 +103,14 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
                     return new ByReferenceType(relType);
                 case FunctionPointerType fpType:
                     // Ideally we relink the method reference it holds, unfortunately its private
-                    FunctionPointerType newFPType = new() {
+                    FunctionPointerType newFpType = new() {
                         ReturnType = Relink(fpType.ReturnType, ctx /* i will just assume that the ReturnType cannot be GenericParameter if its well formed */ ),
                     };
                     foreach (ParameterDefinition parameter in fpType.Parameters) {
-                        newFPType.Parameters.Add(new ParameterDefinition(parameter.Name, parameter.Attributes, Relink(parameter.ParameterType, ctx)));
+                        newFpType.Parameters.Add(new ParameterDefinition(parameter.Name, parameter.Attributes, Relink(parameter.ParameterType, ctx)));
                     }
                     Debug.Assert(fpType.GenericParameters.Count == 0);
-                    return newFPType;
+                    return newFpType;
                 case GenericInstanceType genericInstanceType:
                     GenericInstanceType relGType = new(relType);
                     foreach (TypeReference genArg in genericInstanceType.GenericArguments) {
@@ -138,7 +138,7 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
         return Relink(typeRelinker, val);
     }
     
-    private FieldReference Relink(FieldReference val, IMemberDefinition ctx) {
+    private FieldReference Relink(FieldReference val, IMemberDefinition _) {
         // FieldReferences are nice, no edge cases
         return Relink(fieldRelinker, val);
     }
@@ -151,15 +151,15 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
             Collection<TypeReference> newArgs = newGI.GenericArguments;
             newArgs.Capacity = gMethod.GenericArguments.Count;
             for (int i = 0; i < gMethod.GenericArguments.Count; i++) {
-                IMemberDefinition _ctx = ctx;
+                IMemberDefinition newCtx = ctx;
                 if (gMethod.GenericArguments[i] is GenericParameter gParam) {
-                    _ctx = gParam.Type switch {
+                    newCtx = gParam.Type switch {
                         GenericParameterType.Type => ctx,
                         GenericParameterType.Method => ObtainMethodDefAssert(ctx),
                         _ => throw new ArgumentOutOfRangeException(nameof(val))
                     };
                 }
-                newArgs[i] = Relink(gMethod.GenericArguments[i], _ctx);
+                newArgs[i] = Relink(gMethod.GenericArguments[i], newCtx);
                 continue;
 
                 IMemberDefinition ObtainMethodDefAssert(IMemberDefinition context) {
@@ -177,15 +177,13 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
 
     // There can't really be property and event references in an assembly
     // Those are here for completeness
-    private PropertyReference Relink(PropertyReference val, IMemberDefinition ctx) {
-        // PropertyReferences are nice, no edge cases
-        return Relink(propertyRelinker, val);
-    }
+    // private PropertyReference Relink(PropertyReference val, IMemberDefinition ctx) {
+        // return Relink(propertyRelinker, val);
+    // }
 
-    private EventReference Relink(EventReference val, IMemberDefinition ctx) {
-        // EventReferences are nice, no edge cases
-        return Relink(eventRelinker, val);
-    }
+    // private EventReference Relink(EventReference val, IMemberDefinition ctx) {
+        // return Relink(eventRelinker, val);
+    // }
 
     private TR Relink<TR>(RelinkMap<TR> rel, TR val) where TR : MemberReference {
         return rel(val) ?? val; // Null returns are equivalent to "I don't know how to handle it"
@@ -273,7 +271,6 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
                 case null:
                 case Instruction:
                 case Instruction[]:
-                    break;
                 // These have been relinked already and were not replaced either in the process
                 case VariableDefinition:
                 case ParameterDefinition:
@@ -308,7 +305,7 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
     }
     #endregion
 
-    private static RelinkMap<I> IdentityMap<I>() where I : MemberReference {
+    private static RelinkMap<T> IdentityMap<T>() where T : MemberReference {
         return i => i;
     }
 }

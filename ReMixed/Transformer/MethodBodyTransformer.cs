@@ -157,6 +157,7 @@ public abstract class AttributeTargetedMethodBodyTransformer(MethodPatchContext 
 public abstract class AttributePositionedMethodBodyTransformer(MethodPatchContext context, TypeReference targetAttribute) : AttributeTargetedMethodBodyTransformer(context, targetAttribute) {
 
     protected Dictionary<string, AtAttribute>? FoundAts;
+    private readonly TypeReference targetAttribute = targetAttribute;
 
     public override bool AppliesTo(MethodDefinition memberDef) {
         if (!base.AppliesTo(memberDef)) return false;

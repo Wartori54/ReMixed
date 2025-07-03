@@ -532,7 +532,11 @@ public static class Extensions {
     public static Attribute? Instantiate(this CustomAttribute attr) {
         Type? attrType = Type.GetType(attr.AttributeType.GetReflectionFullName());
         if (attrType == null) return null;
-        object[] ctorParams = attr.ConstructorArguments.Select(arg => arg.Value).ToArray();
+        object[] ctorParams = attr.ConstructorArguments.Select(arg => {
+            if (arg.Value is not TypeDefinition tDef) return arg.Value;
+            // Special case tDefs since it's the only possible ctor arg type that differs from the actual element in runtime (TypeDefiniton vs Type)
+            return Type.GetType(tDef.GetReflectionFullName()) ?? throw new Exception($"Could not reflect type {tDef.FullName}!");
+        }).ToArray();
         object? attrObj = Activator.CreateInstance(attrType, ctorParams);
         if (attrObj == null) return null;
 

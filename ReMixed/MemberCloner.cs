@@ -51,8 +51,12 @@ public static class MemberCloner {
             ImplAttributes = source.ImplAttributes,
             DebugInformation = source.DebugInformation/*.Clone()*/, // TODO
             SemanticsAttributes = source.SemanticsAttributes,
-            PInvokeInfo = source.PInvokeInfo,
         };
+        // The setter of this adds the IsPInvoke attribute regardless of whether this is null nor not
+        // So do not assign unless there's something to deal with
+        if (source.PInvokeInfo != null) { 
+            copy.PInvokeInfo = source.PInvokeInfo;
+        }
         
         foreach (MethodReference @override in source.Overrides) {
             copy.Overrides.Add(@override);
@@ -117,7 +121,10 @@ public static class MemberCloner {
         List<(List<(int ciidx, int idx)>, Instruction targetInstr)> instrsListsToReplace = [];
         int iidx = 0;
         foreach (Instruction instruction in source.Instructions) {
-            Instruction newInstr = Instruction.Create(instruction.OpCode);
+            // Cecil wants to prevent creating instructions with the wrong operand
+            // But code is jank that way, so trick it into giving us an instr and then just overwrite it entirely
+            Instruction newInstr = Instruction.Create(OpCodes.Nop);
+            newInstr.OpCode = instruction.OpCode;
             newInstr.Offset = instruction.Offset;
             object? newOperand;
             switch (instruction.Operand) {

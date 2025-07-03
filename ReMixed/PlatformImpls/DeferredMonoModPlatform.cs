@@ -11,7 +11,7 @@ public class DeferredMonoModPlatform : MonoModPlatform {
     public DeferredMonoModPlatform(ThisCecilDefs.IThisCecilDefsProvider provider) : base(provider) {
     }
 
-    public override void ApplyPatch(MethodBase target, Action<MethodPatchContext.LegCursor> patch) {
+    public void ApplyPatch(MethodBase target, Action<MethodPatchContext.LegCursor> patch) {
         patches.AddPatch(target, patch);
     }
     

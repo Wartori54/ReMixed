@@ -1,13 +1,19 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using Microsoft.CodeAnalysis;
 using Mono.Cecil;
+using Mono.Cecil.Rocks;
 using Mono.Collections.Generic;
 using MonoMod.Utils;
+using ReMixed.Processor;
 
 namespace ReMixed.Transformer;
 
+/// <summary>
+/// Merges a [Mixin] annotated type into its target, simply copying nicely all the members.
+/// </summary>
 public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinition> {
     public int Pass => -1;
 
@@ -15,39 +21,36 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
     
     private readonly Dictionary<TypeReference, TypeIndex> mixinTypeIndex = new();
 
-    // Maps FullNames to all members that have a relation to it that have been merged
-    // Fields are attached to their type fullname
-    // Properties are attached to their 
-    private readonly Dictionary<string, List<IMemberDefinition>> relinkTargets = new();
-
     // Speed purposes, maps pre-relinked methods to properties
-    private readonly Dictionary<MethodDefinition, PropertyDefinition> methodToProperty = new();
+    private readonly Dictionary<MethodDefinition, (PropertyDefinition, MethodInPropType)> methodToProperty = new();
     
     // Speed purposes, maps pre-relinked methods to events
-    private readonly Dictionary<MethodDefinition, EventDefinition> methodToEvent = new();
+    private readonly Dictionary<MethodDefinition, (EventDefinition, MethodInEventType)> methodToEvent = new();
     
-    // Used for the post-copy pass to fix methods, filled in CopyMethod
-    private readonly Dictionary<PropertyDefinition, (MethodDefinition get, MethodDefinition set, Collection<MethodDefinition> other)> relinkedProperties = new();
+    private readonly Dictionary<FieldReference, FieldReference> copiedFields;
+    private readonly Dictionary<PropertyReference, PropertyDefinition> copiedProperties;
+    private readonly Dictionary<EventReference, EventDefinition> copiedEvents;
+    private readonly Dictionary<MethodReference, MethodDefinition> copiedMethods;
     
-    private readonly Dictionary<TypeDefinition, TypeDefinition> mergedTypes = new();
-    
-    private readonly Dictionary<FieldDefinition, FieldDefinition> copiedFields = new();
-    private readonly Dictionary<PropertyDefinition, PropertyDefinition> copiedProperties = new();
-    private readonly Dictionary<EventDefinition, EventDefinition> copiedEvents = new();
-    private readonly Dictionary<MethodDefinition, MethodDefinition> copiedMethods = new();
-    
-    public Dictionary<TypeDefinition, TypeDefinition> MergedTypes => mergedTypes;
-    public Dictionary<FieldDefinition, FieldDefinition> CopiedFields => copiedFields;
-    public Dictionary<PropertyDefinition, PropertyDefinition> CopiedProperties => copiedProperties;
-    public Dictionary<EventDefinition, EventDefinition> CopiedEvents => copiedEvents;
-    public Dictionary<MethodDefinition, MethodDefinition> CopiedMethods => copiedMethods;
+    // public Dictionary<FieldReference, FieldReference> CopiedFields => copiedFields;
+    // public Dictionary<PropertyDefinition, PropertyDefinition> CopiedProperties => copiedProperties;
+    // public Dictionary<EventDefinition, EventDefinition> CopiedEvents => copiedEvents;
+    // public Dictionary<MethodDefinition, MethodDefinition> CopiedMethods => copiedMethods;
     
     
     private MixinAttribute? mixinAttribute;
     private TypeReference? targetMixinType;
 
-    public MixinMergerTransformer(PatchPlatform patchPlatform) {
+    public MixinMergerTransformer(PatchPlatform patchPlatform, 
+        Dictionary<FieldReference, FieldReference>? fields = null,
+        Dictionary<PropertyReference, PropertyDefinition>? properties = null,
+        Dictionary<EventReference, EventDefinition>? events = null,
+        Dictionary<MethodReference, MethodDefinition>? methods = null) {
         platform = patchPlatform;
+        copiedFields = fields ?? new();
+        copiedProperties = properties ?? new();
+        copiedEvents = events ?? new();
+        copiedMethods = methods ?? new();
     }
 
     // This applies to all mixin types
@@ -108,8 +111,6 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
         //     
         // }
         
-        mergedTypes[memberDefSource] = memberDefTarget;
-        
         // foreach ((PropertyDefinition relinkedProperty, (MethodDefinition relinkedGet, MethodDefinition relinkedSet, Collection<MethodDefinition> other)) in relinkedProperties) {
         //     if (relinkedProperty.GetMethod != null && relinkedProperty.GetMethod.DeclaringType != memberDefSource) {
         //         relinkedProperty.GetMethod = relinkedGet;
@@ -133,6 +134,9 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
         //     }
         // }
         
+        // Relink the merged type
+        
+
         // TODO: RelinkTarget pass
         // foreach ((string typeTarget, List<IMemberDefinition> members) in relinkTargets) {
         //     if (!mergedTypes.TryGetValue(typeTarget, out TypeDefinition? mergedType)) continue;
@@ -160,10 +164,10 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
     private void CopyProperty(TypeDefinition dest, PropertyDefinition src) {
         if (IndexType(dest).Identifiers.Contains(src.Name)) throw new Exception($"Property with identifier {src.FullName} already present in type {dest.FullName}");
         PropertyDefinition copy = src.Clone();
-        if (copy.GetMethod != null) methodToProperty[copy.GetMethod] = copy;
-        if (copy.SetMethod != null) methodToProperty[copy.SetMethod] = copy;
-        foreach (MethodDefinition otherM in copy.OtherMethods) {
-            methodToProperty[otherM] = copy;
+        if (copy.GetMethod != null) methodToProperty[copy.GetMethod] = (copy, MethodInPropType.Get);
+        if (copy.SetMethod != null) methodToProperty[copy.SetMethod] = (copy, MethodInPropType.Set);
+        for (int i = 0; i < copy.OtherMethods.Count; i++) {
+            methodToProperty[copy.OtherMethods[i]] = (copy, MethodInPropType.Other + i);
         }
         // AddToRelinkTargets(copy.PropertyType, copy);
         dest.Properties.Add(copy);
@@ -173,11 +177,11 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
     private void CopyEvent(TypeDefinition dest, EventDefinition src) {
         if (IndexType(dest).Identifiers.Contains(src.Name)) throw new Exception($"Event with identifier {src.FullName} already present in type {dest.FullName}");
         EventDefinition copy = src.Clone();
-        if (copy.AddMethod != null) methodToEvent[copy.AddMethod] = copy;
-        if (copy.RemoveMethod != null) methodToEvent[copy.RemoveMethod] = copy;
-        if (copy.InvokeMethod != null) methodToEvent[copy.InvokeMethod] = copy;
-        foreach (MethodDefinition otherM in copy.OtherMethods) {
-            methodToEvent[otherM] = copy;
+        if (copy.AddMethod != null) methodToEvent[copy.AddMethod] = (copy, MethodInEventType.Add);
+        if (copy.RemoveMethod != null) methodToEvent[copy.RemoveMethod] = (copy, MethodInEventType.Remove);
+        if (copy.InvokeMethod != null) methodToEvent[copy.InvokeMethod] = (copy, MethodInEventType.Invoke);
+        for (int i = 0; i < copy.OtherMethods.Count; i++) {
+            methodToEvent[copy.OtherMethods[i]] = (copy, MethodInEventType.Other + i);
         }
         // AddToRelinkTargets(copy.EventType, copy);
         dest.Events.Add(copy);
@@ -185,25 +189,79 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
     }
 
     private void CopyMethod(TypeDefinition dest, MethodDefinition src) {
+        // Ignore .ctor specifically
+        if (src.Name == ".ctor") {
+            // But register the .ctor as moved
+            foreach (MethodDefinition destCtor in dest.GetConstructors()) {
+                if (destCtor.Parameters.Count != src.Parameters.Count) continue;
+                bool match = true;
+                for (int i = 0; i < src.Parameters.Count; i++) {
+                    if (ILPatcher.TypeReferenceEqual(src.Parameters[i].ParameterType, destCtor.Parameters[i].ParameterType)) continue;
+                    match = false;
+                }
+                if (match) {
+                    copiedMethods[src] = destCtor;
+                    break;
+                }
+            }
+            return;
+        }
         if (IndexType(dest).Identifiers.Contains(src.Name)) throw new Exception($"Method with identifier {src.FullName} already present in type {dest.FullName}");
         MethodDefinition copy = src.Clone();
         // Relink: ret value, parameters, overrides, gparameters, mbody's (this param, variables)
         dest.Methods.Add(copy);
         copiedMethods[src] = copy;
+        
+        // Also fix the method in the copied prop
+        {
+            if (methodToProperty.TryGetValue(src, out (PropertyDefinition newProp, MethodInPropType type) v)) {
+                switch (v.type) {
+                    case MethodInPropType.Get:
+                        v.newProp.GetMethod = copy;
+                        break;
+                    case MethodInPropType.Set:
+                        v.newProp.SetMethod = copy;
+                        break;
+                    case MethodInPropType.Other: // Other and any values higher than it
+                    default: {
+                        if (v.newProp.OtherMethods.Count <= v.type - MethodInPropType.Other) {
+                            v.newProp.OtherMethods.Capacity = v.type - MethodInPropType.Other + 1;
+                        }
+                        v.newProp.OtherMethods[v.type - MethodInPropType.Other] = copy;
+                        break;
+                    }
+                }
+            }
+        }
+
+        {
+            if (methodToEvent.TryGetValue(src, out (EventDefinition newEvent, MethodInEventType type) v)) {
+                switch (v.type) {
+                    case MethodInEventType.Add:
+                        v.newEvent.AddMethod = copy;
+                        break;
+                    case MethodInEventType.Remove:
+                        v.newEvent.RemoveMethod = copy;
+                        break;
+                    case MethodInEventType.Invoke:
+                        v.newEvent.InvokeMethod = copy;
+                        break;
+                    case MethodInEventType.Other: // Other and any values higher than it
+                    default: {
+                        if (v.newEvent.OtherMethods.Count <= v.type - MethodInEventType.Other) {
+                            v.newEvent.OtherMethods.Capacity = v.type - MethodInEventType.Other + 1;
+                        }
+                        v.newEvent.OtherMethods[v.type - MethodInEventType.Other] = copy;
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     private void ApplyInterface(TypeDefinition dest, InterfaceImplementation src) {
         InterfaceImplementation copy = src.Clone();
         dest.Interfaces.Add(copy);
-    }
-
-    private void AddToRelinkTargets(TypeReference typeRef, IMemberDefinition member) {
-        if (typeRef is TypeSpecification) throw new NotImplementedException();
-        if (typeRef is GenericParameter) throw new NotSupportedException();
-        if (!relinkTargets.TryGetValue(typeRef.FullName, out List<IMemberDefinition>? members)) {
-            relinkTargets[typeRef.FullName] = members = [];
-        }
-        members.Add(member);
     }
 
     private TypeIndex IndexType(TypeDefinition type) {
@@ -223,5 +281,18 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
         // public HashSet<string> FieldNames { get; } = new();
         // public HashSet<string> MethodNames { get; } = new();
         // public HashSet<string> PropertyNames { get; } = new();
+    }
+
+    private enum MethodInPropType {
+        Get,
+        Set,
+        Other,
+    }
+
+    private enum MethodInEventType {
+        Add,
+        Remove,
+        Invoke,
+        Other,
     }
 }
