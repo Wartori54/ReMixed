@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using Mono.Collections.Generic;
@@ -64,8 +66,12 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
         foreach (GenericParameter genericParameter in target.GenericParameters) {
             foreach (GenericParameterConstraint constraint in genericParameter.Constraints) {
                 constraint.ConstraintType = Relink(constraint.ConstraintType, target);
+                RelinkCAs(constraint.CustomAttributes);
             }
+            RelinkCAs(genericParameter.CustomAttributes);
         }
+        
+        RelinkCAs(target.CustomAttributes);
     }
 
     #region Reference Relinks
@@ -74,21 +80,29 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
     
     // Overload abuse to basically make it seem dynamic (automatically pull the proper RelinkerMap for each type) while still having static typing
     // Also handle edge cases of possible Reference types
-    // FIXME: Find a better way to have this, having to always send a ctx is ugly
-    private TypeReference Relink(TypeReference val, IMemberDefinition ctx) {
+    
+    private TypeReference Relink(TypeReference val, IMemberDefinition? ctx) {
         // TypeReferences have two edge cases in their hierarchy, handle those here
-        if (val is GenericParameter gParam) {
+        if (val is GenericParameter gParam) { // Try to obtain the already existing generic parameters on the new type, otherwise throw
+            if (ctx == null) {
+                throw new InvalidOperationException($"Tried to relink {val} with null context, but a context is required!");
+            }
+            // The generic parameters present in a relink must match to the existing ones in the parent where the generic parameter lives
+            // otherwise we would need to add a generic parameter to the type/method and that would invalidate all references
             GenericParameter newGParam = gParam.Type switch {
-                // TODO: What about nested?
-                GenericParameterType.Type => gParam.Clone(ctx.DeclaringType), // Safe assumption, since we will never relink a type's own generic parameters here
-                GenericParameterType.Method => gParam.Clone((MethodDefinition)ctx), // If this cast fails it's a bug
+                // Nested parameters redeclare the generic parameters present in the parent, thus indices are not really owner aware
+                GenericParameterType.Type => PairWithParent(gParam, ctx.DeclaringType), // Safe assumption, since we will never relink a type's own generic parameters here
+                GenericParameterType.Method => PairWithParent(gParam, (MethodDefinition)ctx), // If this cast fails it's a bug
                 _ => throw new ArgumentOutOfRangeException(nameof(val))
             };
-            // return Relink(IdentityMap<TypeReference>(), newGParam);
             return newGParam;
-            // Constraints should've been relinked already
-            // Also relinking generic types will be done somewhere else
+            // Constraints are handled once the type generics are relinked
+            // Note: we may even drop the constraints of a generic parameter since the only relevant information
+            // that a generic parameter contains is it's index (once it has been attached somewhere that is)
+            // TODO: Check if constrains are invalid
         }
+        // Do this a little bit later since the GenericParameter case does not relink at all
+        Debug.Assert(val.DeclaringType is not GenericInstanceType);
         if (val is TypeSpecification tSpec) {
             TypeReference relType = Relink(tSpec.ElementType, ctx);
             
@@ -104,7 +118,7 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
                 case FunctionPointerType fpType:
                     // Ideally we relink the method reference it holds, unfortunately its private
                     FunctionPointerType newFpType = new() {
-                        ReturnType = Relink(fpType.ReturnType, ctx /* i will just assume that the ReturnType cannot be GenericParameter if its well formed */ ),
+                        ReturnType = Relink(fpType.ReturnType, ctx /* i will just assume that the ReturnType cannot be GenericParameter if it's well-formed */ ),
                     };
                     foreach (ParameterDefinition parameter in fpType.Parameters) {
                         newFpType.Parameters.Add(new ParameterDefinition(parameter.Name, parameter.Attributes, Relink(parameter.ParameterType, ctx)));
@@ -138,12 +152,21 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
         return Relink(typeRelinker, val);
     }
     
-    private FieldReference Relink(FieldReference val, IMemberDefinition _) {
+    private FieldReference Relink(FieldReference val, IMemberDefinition? ctx) {
+        TypeReference[] genArgs = RelinkGenericArgsFromDeclTypes(val, ctx);
+        
         // FieldReferences are nice, no edge cases
-        return Relink(fieldRelinker, val);
+        if (genArgs.Length == 0) {
+            return Relink(fieldRelinker, val);
+        }
+        FieldReference relk = Relink(fieldRelinker, val);
+        if (relk == val) return relk; // Cannot Reattach without having removed generic arguments
+        relk = relk.CloneAndAttachDeclType(MemberCloner.Clone);
+        ReAttachGenericArgumentsLike(relk, genArgs);
+        return relk;
     }
     
-    private MethodReference Relink(MethodReference val, IMemberDefinition ctx) {
+    private MethodReference Relink(MethodReference val, IMemberDefinition? ctx) {
         if (val is MethodSpecification) {
             // Anything implementing other methodSpec types wont be supported
             if (val is not GenericInstanceMethod gMethod) throw new NotSupportedException($"All {nameof(MethodSpecification)} must be {nameof(GenericInstanceMethod)}!");
@@ -151,15 +174,19 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
             Collection<TypeReference> newArgs = newGI.GenericArguments;
             newArgs.Capacity = gMethod.GenericArguments.Count;
             for (int i = 0; i < gMethod.GenericArguments.Count; i++) {
-                IMemberDefinition newCtx = ctx;
+                IMemberDefinition? newCtx = ctx;
                 if (gMethod.GenericArguments[i] is GenericParameter gParam) {
+                    if (ctx == null) {
+                        throw new InvalidOperationException($"Tried to relink {val} with null context but a context is required!");
+                    }
                     newCtx = gParam.Type switch {
                         GenericParameterType.Type => ctx,
                         GenericParameterType.Method => ObtainMethodDefAssert(ctx),
                         _ => throw new ArgumentOutOfRangeException(nameof(val))
                     };
                 }
-                newArgs[i] = Relink(gMethod.GenericArguments[i], newCtx);
+                // Assigning to Capacity won't change the actual size, so doing newArgs[i] = ... will throw arg out of range here
+                newArgs.Add(Relink(gMethod.GenericArguments[i], newCtx));
                 continue;
 
                 IMemberDefinition ObtainMethodDefAssert(IMemberDefinition context) {
@@ -172,17 +199,26 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
             }
             return newGI;
         }
-        return Relink(methodRelinker, val);
+        // The above condition recursively calls and will ultimately go through this
+        TypeReference[] genArgs = RelinkGenericArgsFromDeclTypes(val, ctx);
+        if (genArgs.Length == 0) {
+            return Relink(methodRelinker, val);
+        }
+        MethodReference relk = Relink(methodRelinker, val);
+        if (relk == val) return relk;
+        relk = relk.CloneAndAttachDeclType(MemberCloner.Clone);
+        ReAttachGenericArgumentsLike(relk, genArgs);
+        return relk;
     }
 
     // There can't really be property and event references in an assembly
     // Those are here for completeness
     // private PropertyReference Relink(PropertyReference val, IMemberDefinition ctx) {
-        // return Relink(propertyRelinker, val);
+        // ...
     // }
 
     // private EventReference Relink(EventReference val, IMemberDefinition ctx) {
-        // return Relink(eventRelinker, val);
+        // ...
     // }
 
     private TR Relink<TR>(RelinkMap<TR> rel, TR val) where TR : MemberReference {
@@ -196,6 +232,7 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
     private void Relink(FieldDefinition field) {
         // Fields only need to have this relinked
         field.FieldType = Relink(field.FieldType, field);
+        RelinkCAs(field.CustomAttributes);
     }
 
     private void Relink(PropertyDefinition property) {
@@ -205,6 +242,8 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
         for (int i = 0; i < property.OtherMethods.Count; i++) {
             property.OtherMethods[i] = ProperResolve(Relink(property.OtherMethods[i], property));
         }
+        
+        RelinkCAs(property.CustomAttributes);
 
         return;
         MethodDefinition ProperResolve(MethodReference mref) {
@@ -222,6 +261,8 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
         for (int i = 0; i < @event.OtherMethods.Count; i++) {
             @event.OtherMethods[i] = ProperResolve(Relink(@event.OtherMethods[i], @event));
         }
+        
+        RelinkCAs(@event.CustomAttributes);
         
         return;
         MethodDefinition ProperResolve(MethodReference mref) {
@@ -248,7 +289,7 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
             GenericParameter gp = method.GenericParameters[i];
             // There's not much to do with generic parameters, other than to relink the constraints
             for (int j = 0; j < gp.Constraints.Count; j++) {
-                gp.Constraints[j].ConstraintType = Relink(gp.Constraints[j].ConstraintType, method /* wont be used anyway */);
+                gp.Constraints[j].ConstraintType = Relink(gp.Constraints[j].ConstraintType, method /* won't be used anyway */);
             }
         }
         
@@ -287,25 +328,103 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
                     break;
                 case CallSite callSite:
                     // Ideally we relink the method reference it holds, unfortunately its private
-                    CallSite newCS = new(/* ReturnType = */ Relink(callSite.ReturnType, method));
+                    CallSite newCs = new(/* ReturnType = */ Relink(callSite.ReturnType, method));
                     foreach (ParameterDefinition param in callSite.Parameters) {
-                        newCS.Parameters.Add(new ParameterDefinition(param.Name, param.Attributes, Relink(param.ParameterType, method)));
+                        newCs.Parameters.Add(new ParameterDefinition(param.Name, param.Attributes, Relink(param.ParameterType, method)));
                     }
-                    instruction.Operand = newCS;
+                    instruction.Operand = newCs;
                     break;
                 default:
                     throw new InvalidOperationException($"Unexpected operand type {instruction.Operand.GetType()}");
             }
         }
+        
+        RelinkCAs(method.CustomAttributes);
     }
 
     // For some reason you cannot read the type this interface impl is defined on
     private void Relink(InterfaceImplementation interfaceImplementation, TypeDefinition ctx) {
         interfaceImplementation.InterfaceType = Relink(interfaceImplementation.InterfaceType, ctx);
+        
+        RelinkCAs(interfaceImplementation.CustomAttributes);
     }
+    
     #endregion
+    
+    #region Extras
+
+    private void RelinkCAs(Collection<CustomAttribute> attributes) {
+        if (attributes.Count == 0) return;
+        foreach (CustomAttribute ca in attributes) {
+            ca.Constructor = Relink(ca.Constructor, null /* There's no context here */);
+
+            for (int i = 0; i < ca.ConstructorArguments.Count; i++) {
+                // Just relink the TypeDefinitions that may appear as values since all other possible values are primitives anyway
+                // The Type of the argument does not need to be relinked either since its always primitive or Type as well
+                if (ca.ConstructorArguments[i].Value is not TypeDefinition tDef) continue;
+                ca.ConstructorArguments[i] = new CustomAttributeArgument(ca.ConstructorArguments[i].Type, Relink(tDef, null /* No context here */));
+            }
+
+            foreach (Collection<CustomAttributeNamedArgument> col in (Span<Collection<CustomAttributeNamedArgument>>) [ca.Fields, ca.Properties]) {
+                for (int i = 0; i < col.Count; i++) {
+                    if (col[i].Argument.Value is not TypeDefinition tDef) continue;
+                    // This is very ugly, but there are no setters on anything, so we must recreate everything
+                    // And we also have to dup code because mono decided to use its special Collection<T> type for lists :/ (no ref allowed magic)
+                    col[i] = new CustomAttributeNamedArgument(col[i].Name, 
+                        new CustomAttributeArgument(col[i].Argument.Type, Relink(tDef, null /* No context here */)));
+                }
+            }
+        }
+    }
 
     private static RelinkMap<T> IdentityMap<T>() where T : MemberReference {
         return i => i;
     }
+
+    private GenericParameter PairWithParent(GenericParameter source, IGenericParameterProvider parent) {
+        if (source.Position < 0 || source.Position >= parent.GenericParameters.Count) throw new ArgumentOutOfRangeException(nameof(source));
+        return parent.GenericParameters[source.Position];
+    }
+
+    // Relink the arguments, note that there can only be a single GIT in the DeclaringType tree (and it's at the end)
+    // `member` is not mutated
+    private TypeReference[] RelinkGenericArgsFromDeclTypes(MemberReference member, IMemberDefinition? ctx) {
+        if (member.DeclaringType == null) return [];
+        TypeReference[] ret = [];
+        if (member.DeclaringType is GenericInstanceType git) {
+            ret = new TypeReference[git.GenericArguments.Count];
+            for (int i = 0; i < ret.Length; i++) {
+                ret[i] = Relink(git.GenericArguments[i], ctx);
+            }
+        }
+#if DEBUG
+        TypeReference curr = member.DeclaringType;
+        int amount = 0;
+        while (curr != null) {
+            if (curr.DeclaringType is GenericInstanceType) {
+                amount++;
+            }
+            
+            curr = curr.DeclaringType;
+        }
+        // The entirety of the generic arguments of all the types (including nested) will be in the topmost declaring type
+        if (amount > 1) throw new NotSupportedException("Found type with multiple GenericInstanceTypes in its declaring type tree, this is not supported!");
+#endif
+        return ret;
+    }
+
+    // This method assumes `memberDest` is a cloned ref that can be messed with
+    // Assume that GenericInstanceTypes can only appear in the DeclaringType of the MemberReferences and nowhere else in the DeclaringType tree
+    private void ReAttachGenericArgumentsLike(MemberReference memberDest, TypeReference[] genericArgs) {
+        if (memberDest.DeclaringType is GenericInstanceType) {
+            throw new InvalidOperationException("Tried to attach generic arguments on an already generic type!");
+        }
+        GenericInstanceType declDestGIT = new(memberDest.DeclaringType);
+        foreach (TypeReference ga in genericArgs) {
+            declDestGIT.GenericArguments.Add(ga);
+        }
+        memberDest.DeclaringType = declDestGIT;
+    }
+
+    #endregion
 }

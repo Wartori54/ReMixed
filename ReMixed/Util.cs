@@ -82,4 +82,12 @@ public class Util {
             return true;
         };
     }
+
+    public static int HashArrContents<T>(T[] arr) where T : notnull {
+        int arrHash = 0xababcdc;
+        foreach (T a in arr) {
+            arrHash = unchecked(arrHash * (int)0x9e3779b9 + a.GetHashCode());
+        }
+        return arrHash;
+    }
 }

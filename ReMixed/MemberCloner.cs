@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.Tracing;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
 namespace ReMixed;
 
 public static class MemberCloner {
+    // Clone defs without attaching to the declaring type
     public static FieldDefinition Clone(this FieldDefinition source) {
         return new FieldDefinition(source.Name, source.Attributes, source.FieldType) {
             IsSpecialName = source.IsSpecialName,
@@ -46,34 +46,36 @@ public static class MemberCloner {
             IsSpecialName = source.IsSpecialName,
             IsRuntimeSpecialName = source.IsRuntimeSpecialName,
             MethodReturnType = source.MethodReturnType,
-            // Body = source.Body.Clone(),
+            // Body = source.Body.Clone(), // Done later below
             CallingConvention = source.CallingConvention,
             ImplAttributes = source.ImplAttributes,
-            DebugInformation = source.DebugInformation/*.Clone()*/, // TODO
+            DebugInformation = source.DebugInformation /*.Clone()*/, // TODO
             SemanticsAttributes = source.SemanticsAttributes,
+            HasThis = source.HasThis,
+            ExplicitThis = source.ExplicitThis,
         };
         // The setter of this adds the IsPInvoke attribute regardless of whether this is null nor not
         // So do not assign unless there's something to deal with
-        if (source.PInvokeInfo != null) { 
+        if (source.PInvokeInfo != null) {
             copy.PInvokeInfo = source.PInvokeInfo;
         }
-        
+
         foreach (MethodReference @override in source.Overrides) {
             copy.Overrides.Add(@override);
         }
-        
+
         foreach (ParameterDefinition parameter in source.Parameters) {
             copy.Parameters.Add(parameter.Clone());
         }
-        
+
         foreach (GenericParameter genericParameter in source.GenericParameters) {
             copy.GenericParameters.Add(genericParameter.Clone(copy, pair: false));
         }
-        
+
         foreach (CustomDebugInformation customDebugInformation in source.CustomDebugInformations) {
             copy.CustomDebugInformations.Add(customDebugInformation);
         }
-        
+
         copy.Body = source.Body.Clone(copy);
         // TODO
         // foreach (SecurityDeclaration securityDeclaration in source.SecurityDeclarations) {
@@ -83,15 +85,15 @@ public static class MemberCloner {
         return copy.CloneCustomAttributes(source);
     }
 
-    public static MethodBody Clone(this MethodBody source, MethodDefinition owner) {
+    private static MethodBody Clone(this MethodBody source, MethodDefinition owner) {
         MethodBody copy = new(owner) {
             InitLocals = source.InitLocals,
             MaxStackSize = source.MaxStackSize,
-            
+
             // ThisParameter is already handled by cecil itself
             /*LocalVarToken = source.LocalVarToken,*/ // Dont copy this
         };
-        
+
         // Even though `varDef.Clone()` doesn't assign the index, adding it here will
         // thus it will match the original ones
         foreach (VariableDefinition variable in source.Variables) {
@@ -102,7 +104,7 @@ public static class MemberCloner {
         foreach (ExceptionHandler exceptionHandler in source.ExceptionHandlers) {
             ExceptionHandler newExhHandler = new(exceptionHandler.HandlerType);
             copy.ExceptionHandlers.Add(newExhHandler);
-            
+
             if (exceptionHandler.TryStart != null)
                 exhHandlerInstrReplacer[exceptionHandler.TryStart] = i => newExhHandler.TryStart = i;
             if (exceptionHandler.TryEnd != null)
@@ -113,7 +115,7 @@ public static class MemberCloner {
                 exhHandlerInstrReplacer[exceptionHandler.HandlerStart] = i => newExhHandler.HandlerStart = i;
             if (exceptionHandler.HandlerEnd != null)
                 exhHandlerInstrReplacer[exceptionHandler.HandlerEnd] = i => newExhHandler.HandlerEnd = i;
-            
+
             newExhHandler.CatchType = exceptionHandler.CatchType;
         }
 
@@ -180,7 +182,7 @@ public static class MemberCloner {
                 default:
                     throw new NotSupportedException("Unknown operand of type: " + instruction.Operand.GetType());
             }
-            
+
             newInstr.Operand = newOperand;
             if (exhHandlerInstrReplacer.TryGetValue(instruction, out Action<Instruction>? handler)) {
                 handler.Invoke(newInstr);
@@ -215,6 +217,7 @@ public static class MemberCloner {
         return new InterfaceImplementation(source.InterfaceType).CloneCustomAttributes(source);
     }
 
+    // This does not actually clone in all cases, try to match the existing gparam on the dest, or otherwise actually clone
     public static GenericParameter Clone(this GenericParameter source, IGenericParameterProvider dest, bool pair = true) {
         if (pair && source.Position < dest.GenericParameters.Count) {
             return dest.GenericParameters[source.Position];
@@ -226,8 +229,48 @@ public static class MemberCloner {
         foreach (GenericParameterConstraint constraint in source.Constraints) {
             copy.Constraints.Add(new GenericParameterConstraint(constraint.ConstraintType).CloneCustomAttributes(constraint));
         }
-        
+
         return copy.CloneCustomAttributes(source);
+    }
+
+    public static TypeDefinition CloneTDefIdentity(this TypeDefinition source) {
+        TypeDefinition copy = new TypeDefinition(source.Namespace, source.Name, source.Attributes)
+            .CloneCustomAttributes(source);
+
+        
+        foreach (GenericParameter genericParameter in source.GenericParameters) {
+            copy.GenericParameters.Add(genericParameter.Clone(copy, pair: false));
+        }
+        // foreach (InterfaceImplementation interfaceImplementation in source.Interfaces) {
+        //     copy.Interfaces.Add(interfaceImplementation.Clone());
+        // }
+        //
+        // foreach (TypeDefinition nestedType in source.NestedTypes) {
+        //     copy.NestedTypes.Add(nestedType.CloneTDef());
+        // }
+        //
+        // foreach (MethodDefinition method in source.Methods) {
+        //     copy.Methods.Add(method.Clone());
+        // }
+        //
+        // foreach (FieldDefinition field in source.Fields) {
+        //     copy.Fields.Add(field.Clone());
+        // }
+        //
+        // foreach (EventDefinition @event in source.Events) {
+        //     copy.Events.Add(@event.Clone());
+        // }
+        //
+        // foreach (PropertyDefinition property in source.Properties) {
+        //     copy.Properties.Add(property.Clone());
+        // }
+
+        // TODO
+        // foreach (SecurityDeclaration securityDeclaration in source.SecurityDeclarations) {
+        //     copy.SecurityDeclarations.Add(securityDeclaration/*.Clone()*/);
+        // }
+
+        return copy;
     }
 
     public static T CloneCustomAttributes<T>(this T dest, T source) where T : ICustomAttributeProvider {
@@ -237,9 +280,8 @@ public static class MemberCloner {
         return dest;
     }
 
-    // TODO: This is not good enough...
     public static CustomAttribute Clone(this CustomAttribute source) {
-        CustomAttribute copy = new CustomAttribute(source.Constructor);
+        CustomAttribute copy = new(source.Constructor);
         foreach (CustomAttributeArgument customAttributeArgument in source.ConstructorArguments) {
             copy.ConstructorArguments.Add(customAttributeArgument);
         }
@@ -253,20 +295,76 @@ public static class MemberCloner {
         return copy;
     }
 
+    // Reference clones, without attaching to the declaring type
+
+    public static FieldReference Clone(this FieldReference source) {
+        return new FieldReference(source.Name, source.FieldType);
+    }
+
+    // These aren't real, they must be PropertyDefinitions instead
+    public static PropertyReference Clone(this PropertyReference source) {
+        return ((PropertyDefinition)source).Clone();
+    }
+
+    // These aren't real, they must be EventDefinitions instead
+    public static EventReference Clone(this EventReference source) {
+        return ((EventDefinition)source).Clone();
+    }
+
+    public static MethodReference Clone(this MethodReference source) {
+        if (source is GenericInstanceMethod gimSource) { // Handle the only edge case
+            GenericInstanceMethod gimCopy = new(gimSource.ElementMethod.Clone());
+
+            foreach (TypeReference gimParam in gimSource.GenericArguments) {
+                gimCopy.GenericArguments.Add(gimParam);
+            }
+
+            return gimCopy;
+        }
+        MethodReference copy = new(source.Name, source.ReturnType) {
+            MethodReturnType = source.MethodReturnType,
+            CallingConvention = source.CallingConvention,
+        };
+
+        foreach (ParameterDefinition parameter in source.Parameters) {
+            copy.Parameters.Add(parameter.Clone());
+        }
+
+        foreach (GenericParameter genericParameter in source.GenericParameters) {
+            copy.GenericParameters.Add(genericParameter.Clone(copy, pair: false));
+        }
+
+        return copy;
+    }
+
+    // TODO: This is not complete, a complete but specialized version exists in the RelinkerProcessor
+    [Obsolete("Incomplete")]
+    public static TypeReference Clone(this TypeReference source, bool cloneTree = false) {
+        TypeReference copy = new(source.Namespace, source.Name, source.Module, source.Scope) {
+            IsValueType = source.IsValueType,
+            DeclaringType = cloneTree ? source.DeclaringType.Clone() : source.DeclaringType,
+        };
+
+        foreach (GenericParameter genericParameter in source.GenericParameters) {
+            copy.GenericParameters.Add(genericParameter.Clone(copy, pair: false));
+        }
+
+        return copy;
+    }
 
     public static void ForEachMember(this TypeDefinition source, Action<IMemberDefinition> action) {
         foreach (FieldDefinition field in source.Fields) {
             action(field);
         }
-        
+
         foreach (PropertyDefinition property in source.Properties) {
             action(property);
         }
-        
+
         foreach (EventDefinition @event in source.Events) {
             action(@event);
         }
-        
+
         foreach (TypeDefinition typeDefinition in source.NestedTypes) {
             action(typeDefinition);
         }
@@ -296,13 +394,13 @@ public static class MemberCloner {
         if (source.Name != other.Name)
             return false;
 
-        if (source.Type != other.Type) 
+        if (source.Type != other.Type)
             return false;
 
-        if (source.Attributes != other.Attributes) 
+        if (source.Attributes != other.Attributes)
             return false;
-        
-        if (source.Position != other.Position) 
+
+        if (source.Position != other.Position)
             return false;
 
         if (source.Constraints.Count != other.Constraints.Count) return false;
@@ -318,5 +416,11 @@ public static class MemberCloner {
     public static bool ConstraintEquals(this GenericParameterConstraint source, GenericParameterConstraint other) {
         // Ignore attributes intentionally
         return ILPatcher.TypeReferenceEqual(source.ConstraintType, other.ConstraintType);
+    }
+
+    public static T CloneAndAttachDeclType<T>(this T source, Func<T, T> cloner) where T : MemberReference {
+        T dest = cloner(source);
+        dest.DeclaringType = source.DeclaringType;
+        return dest;
     }
 }

@@ -27,10 +27,10 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
     // Speed purposes, maps pre-relinked methods to events
     private readonly Dictionary<MethodDefinition, (EventDefinition, MethodInEventType)> methodToEvent = new();
     
-    private readonly Dictionary<FieldReference, FieldReference> copiedFields;
-    private readonly Dictionary<PropertyReference, PropertyDefinition> copiedProperties;
-    private readonly Dictionary<EventReference, EventDefinition> copiedEvents;
-    private readonly Dictionary<MethodReference, MethodDefinition> copiedMethods;
+    private readonly Dictionary<FieldRefUID, FieldReference> copiedFields;
+    private readonly Dictionary<PropertyRefUID, PropertyDefinition> copiedProperties;
+    private readonly Dictionary<EventRefUID, EventDefinition> copiedEvents;
+    private readonly Dictionary<MethodRefUID, MethodDefinition> copiedMethods;
     
     // public Dictionary<FieldReference, FieldReference> CopiedFields => copiedFields;
     // public Dictionary<PropertyDefinition, PropertyDefinition> CopiedProperties => copiedProperties;
@@ -42,10 +42,10 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
     private TypeReference? targetMixinType;
 
     public MixinMergerTransformer(PatchPlatform patchPlatform, 
-        Dictionary<FieldReference, FieldReference>? fields = null,
-        Dictionary<PropertyReference, PropertyDefinition>? properties = null,
-        Dictionary<EventReference, EventDefinition>? events = null,
-        Dictionary<MethodReference, MethodDefinition>? methods = null) {
+        Dictionary<FieldRefUID, FieldReference>? fields = null,
+        Dictionary<PropertyRefUID, PropertyDefinition>? properties = null,
+        Dictionary<EventRefUID, EventDefinition>? events = null,
+        Dictionary<MethodRefUID, MethodDefinition>? methods = null) {
         platform = patchPlatform;
         copiedFields = fields ?? new();
         copiedProperties = properties ?? new();
@@ -101,7 +101,8 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
         }
 
         // Just verify that it matches, since it doesn't really make sense to "merge" them
-        if (memberDefSource.GenericParameters.Count != memberDefTarget.GenericParameters.Count) throw new Exception($"Generic parameter count mismatch in {memberDefSource.FullName}->{memberDefTarget.FullName}");
+        if (memberDefSource.GenericParameters.Count != memberDefTarget.GenericParameters.Count) 
+            throw new Exception($"Generic parameter count mismatch in {memberDefSource.FullName}->{memberDefTarget.FullName} ({memberDefSource.GenericParameters.Count}->{memberDefTarget.GenericParameters.Count})");
         for (int i = 0; i < memberDefTarget.GenericParameters.Count; i++) {
             if (!memberDefSource.GenericParameters[i].GenericEquals(memberDefTarget.GenericParameters[i])) throw new Exception($"Generic parameter {i} in {memberDefSource.FullName} does not match {memberDefTarget.FullName}");
         }
@@ -135,22 +136,6 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
         // }
         
         // Relink the merged type
-        
-
-        // TODO: RelinkTarget pass
-        // foreach ((string typeTarget, List<IMemberDefinition> members) in relinkTargets) {
-        //     if (!mergedTypes.TryGetValue(typeTarget, out TypeDefinition? mergedType)) continue;
-        //     foreach (IMemberDefinition member in members) {
-        //         switch (member) {
-        //             case FieldDefinition fieldDefinition:
-        //                 fieldDefinition.FieldType = mergedType;
-        //                 break;
-        //             default:
-        //                 throw new NotSupportedException();
-        //                 break;
-        //         }
-        //     }
-        // }
     }
 
     private void CopyField(TypeDefinition dest, FieldDefinition src) {
@@ -158,7 +143,7 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
         FieldDefinition copy = src.Clone();
         // AddToRelinkTargets(copy.FieldType, copy);
         dest.Fields.Add(copy);
-        copiedFields[src] = copy;
+        copiedFields[src.ToUID()] = copy;
     }
 
     private void CopyProperty(TypeDefinition dest, PropertyDefinition src) {
@@ -171,7 +156,7 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
         }
         // AddToRelinkTargets(copy.PropertyType, copy);
         dest.Properties.Add(copy);
-        copiedProperties[src] = copy;
+        copiedProperties[src.ToUID()] = copy;
     }
 
     private void CopyEvent(TypeDefinition dest, EventDefinition src) {
@@ -185,7 +170,7 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
         }
         // AddToRelinkTargets(copy.EventType, copy);
         dest.Events.Add(copy);
-        copiedEvents[src] = copy;
+        copiedEvents[src.ToUID()] = copy;
     }
 
     private void CopyMethod(TypeDefinition dest, MethodDefinition src) {
@@ -200,7 +185,7 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
                     match = false;
                 }
                 if (match) {
-                    copiedMethods[src] = destCtor;
+                    copiedMethods[src.ToUID()] = destCtor;
                     break;
                 }
             }
@@ -210,7 +195,7 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
         MethodDefinition copy = src.Clone();
         // Relink: ret value, parameters, overrides, gparameters, mbody's (this param, variables)
         dest.Methods.Add(copy);
-        copiedMethods[src] = copy;
+        copiedMethods[src.ToUID()] = copy;
         
         // Also fix the method in the copied prop
         {
