@@ -15,9 +15,8 @@ namespace ReMixed.Transformer;
 /// Merges a [Mixin] annotated type into its target, simply copying nicely all the members.
 /// </summary>
 public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinition> {
-    public int Pass => -1;
 
-    private readonly PatchPlatform platform;
+    private readonly string prefixId;
     
     private readonly Dictionary<TypeReference, TypeIndex> mixinTypeIndex = new();
 
@@ -26,50 +25,55 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
     
     // Speed purposes, maps pre-relinked methods to events
     private readonly Dictionary<MethodDefinition, (EventDefinition, MethodInEventType)> methodToEvent = new();
-    
-    private readonly Dictionary<FieldRefUID, FieldReference> copiedFields;
-    private readonly Dictionary<PropertyRefUID, PropertyDefinition> copiedProperties;
-    private readonly Dictionary<EventRefUID, EventDefinition> copiedEvents;
-    private readonly Dictionary<MethodRefUID, MethodDefinition> copiedMethods;
+
+    private readonly RelinkerConfig relinkerConfig;
     
     // public Dictionary<FieldReference, FieldReference> CopiedFields => copiedFields;
     // public Dictionary<PropertyDefinition, PropertyDefinition> CopiedProperties => copiedProperties;
     // public Dictionary<EventDefinition, EventDefinition> CopiedEvents => copiedEvents;
     // public Dictionary<MethodDefinition, MethodDefinition> CopiedMethods => copiedMethods;
-    
-    
-    private MixinAttribute? mixinAttribute;
-    private TypeReference? targetMixinType;
 
-    public MixinMergerTransformer(PatchPlatform patchPlatform, 
-        Dictionary<FieldRefUID, FieldReference>? fields = null,
-        Dictionary<PropertyRefUID, PropertyDefinition>? properties = null,
-        Dictionary<EventRefUID, EventDefinition>? events = null,
-        Dictionary<MethodRefUID, MethodDefinition>? methods = null) {
-        platform = patchPlatform;
-        copiedFields = fields ?? new();
-        copiedProperties = properties ?? new();
-        copiedEvents = events ?? new();
-        copiedMethods = methods ?? new();
+    internal MixinMergerTransformer( 
+        string id,
+        RelinkerConfig rconfig) {
+        prefixId = id;
+        relinkerConfig = rconfig;
     }
 
-    // This applies to all mixin types
-    public bool AppliesTo(TypeDefinition memberDef) {
-        bool applies = false;
-        foreach (CustomAttribute customAttribute in memberDef.CustomAttributes) {
-            if (!ILPatcher.TypeReferenceEqual(customAttribute.AttributeType, platform.ThisCecilDefs.MixinAttribute)) continue;
-            if (mixinAttribute != null) throw new NotSupportedException("Cannot mixin to multiple classes using the same instance");
-            mixinAttribute = (MixinAttribute) customAttribute.Instantiate()!;
-            // The following ImportReference should not fail since you will need an asm ref to embed the type in a custom attr in the first place
-            targetMixinType = memberDef.Module.ImportReference(mixinAttribute.Target);
-            applies = true;
+    public class Factory : ITransformerFactory<TypeDefinition, TypeDefinition> {
+        public int Pass => -1;
+        
+        private readonly PatchPlatform platform;
+        private readonly string prefixId;
+        private readonly RelinkerConfig relinkerConfig;
+        
+        public Factory(PatchPlatform patchPlatform, 
+            string id,
+            RelinkerConfig rconfig) {
+            platform = patchPlatform;
+            prefixId = id;
+            relinkerConfig = rconfig;
         }
-        return applies;
-    }
-    
-    // Find all classes that have the attribute targeting the current class
-    public Predicate<TypeDefinition> GetTargetPredicate(TypeDefinition memberDef) {
-        return Util.ToOneShot<TypeDefinition>(type => ILPatcher.TypeReferenceEqual(targetMixinType ?? throw new UnreachableException(), type));
+        
+        public IEnumerable<TypeDefinition>? AppliesTo(TypeDefinition memberDef, Collection<TypeDefinition> targets) {
+            bool applies = false;
+            MixinAttribute? mixinAttribute = null;
+            TypeReference? targetMixinType = null;
+            foreach (CustomAttribute customAttribute in memberDef.CustomAttributes) {
+                if (!ILPatcher.TypeReferenceEqual(customAttribute.AttributeType, platform.ThisCecilDefs.MixinAttribute)) continue;
+                if (mixinAttribute != null) throw new NotSupportedException("Cannot mixin to multiple classes using the same instance");
+                mixinAttribute = (MixinAttribute) customAttribute.Instantiate()!;
+                // The following ImportReference should not fail since you will need an asm ref to embed the type in a custom attr in the first place
+                targetMixinType = memberDef.Module.ImportReference(mixinAttribute.Target);
+                applies = true;
+            }
+
+            if (!applies) return null;
+            
+            return targets.Where(t => ILPatcher.TypeReferenceEqual(targetMixinType ?? throw new UnreachableException(), t));
+        }
+        
+        public ITransformer<TypeDefinition, TypeDefinition> For(TypeDefinition patch, TypeDefinition target) => new MixinMergerTransformer(prefixId, relinkerConfig);
     }
     
     // source -> mixin, target -> type targeted by the mixin
@@ -87,6 +91,7 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
             CopyEvent(memberDefTarget, @event);
         }
         
+        // Property and Event processing must happen before this
         foreach (MethodDefinition method in memberDefSource.Methods) {
             CopyMethod(memberDefTarget, method);
         }
@@ -139,15 +144,21 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
     }
 
     private void CopyField(TypeDefinition dest, FieldDefinition src) {
-        if (IndexType(dest).Identifiers.Contains(src.Name)) throw new Exception($"Field with identifier {src.FullName} already present in type {dest.FullName}");
+        if (relinkerConfig.GetNew(src) != null) return;
+        if (IndexType(dest).Identifiers.Contains(src.Name)) {
+            Console.WriteLine($"Warning: Field with identifier {src.FullName} already present in type {dest.FullName}");
+        }
         FieldDefinition copy = src.Clone();
         // AddToRelinkTargets(copy.FieldType, copy);
         dest.Fields.Add(copy);
-        copiedFields[src.ToUID()] = copy;
+        relinkerConfig.Moved(src, copy);
     }
 
     private void CopyProperty(TypeDefinition dest, PropertyDefinition src) {
-        if (IndexType(dest).Identifiers.Contains(src.Name)) throw new Exception($"Property with identifier {src.FullName} already present in type {dest.FullName}");
+        if (relinkerConfig.GetNew(src) != null) return;
+        if (IndexType(dest).Identifiers.Contains(src.Name)) {
+            Console.WriteLine($"Warning: Field with identifier {src.FullName} already present in type {dest.FullName}");
+        }
         PropertyDefinition copy = src.Clone();
         if (copy.GetMethod != null) methodToProperty[copy.GetMethod] = (copy, MethodInPropType.Get);
         if (copy.SetMethod != null) methodToProperty[copy.SetMethod] = (copy, MethodInPropType.Set);
@@ -156,11 +167,13 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
         }
         // AddToRelinkTargets(copy.PropertyType, copy);
         dest.Properties.Add(copy);
-        copiedProperties[src.ToUID()] = copy;
+        relinkerConfig.Moved(src, copy);
     }
 
     private void CopyEvent(TypeDefinition dest, EventDefinition src) {
-        if (IndexType(dest).Identifiers.Contains(src.Name)) throw new Exception($"Event with identifier {src.FullName} already present in type {dest.FullName}");
+        if (relinkerConfig.GetNew(src) != null) return;
+        if (IndexType(dest).Identifiers.Contains(src.Name)) 
+            Console.WriteLine($"Warning: Event with identifier {src.FullName} already present in type {dest.FullName}");
         EventDefinition copy = src.Clone();
         if (copy.AddMethod != null) methodToEvent[copy.AddMethod] = (copy, MethodInEventType.Add);
         if (copy.RemoveMethod != null) methodToEvent[copy.RemoveMethod] = (copy, MethodInEventType.Remove);
@@ -170,13 +183,15 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
         }
         // AddToRelinkTargets(copy.EventType, copy);
         dest.Events.Add(copy);
-        copiedEvents[src.ToUID()] = copy;
+        relinkerConfig.Moved(src, copy);
     }
 
     private void CopyMethod(TypeDefinition dest, MethodDefinition src) {
+        if (relinkerConfig.GetNew(src) != null) return;
         // Ignore .ctor specifically
         if (src.Name == ".ctor") {
             // But register the .ctor as moved
+            bool moved = false;
             foreach (MethodDefinition destCtor in dest.GetConstructors()) {
                 if (destCtor.Parameters.Count != src.Parameters.Count) continue;
                 bool match = true;
@@ -185,17 +200,20 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
                     match = false;
                 }
                 if (match) {
-                    copiedMethods[src.ToUID()] = destCtor;
+                    relinkerConfig.Moved(src, destCtor);
+                    moved = true;
                     break;
                 }
             }
+            if (!moved) throw new Exception($"{src.DeclaringType.FullName} contains a constructor for which there is no matching one in {dest.FullName}");
             return;
         }
-        if (IndexType(dest).Identifiers.Contains(src.Name)) throw new Exception($"Method with identifier {src.FullName} already present in type {dest.FullName}");
+        if (IndexType(dest).Identifiers.Contains(src.Name)) 
+            Console.WriteLine($"Warning: Method with identifier {src.FullName} already present in type {dest.FullName}");
         MethodDefinition copy = src.Clone();
         // Relink: ret value, parameters, overrides, gparameters, mbody's (this param, variables)
         dest.Methods.Add(copy);
-        copiedMethods[src.ToUID()] = copy;
+        relinkerConfig.Moved(src, copy);
         
         // Also fix the method in the copied prop
         {

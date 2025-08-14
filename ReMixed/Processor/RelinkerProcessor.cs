@@ -15,21 +15,19 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
     private readonly RelinkMap<MethodReference> methodRelinker;
     // private readonly RelinkMap<PropertyReference> propertyRelinker;
     // private readonly RelinkMap<EventReference> eventRelinker;
+    private readonly RelinkerConfig config;
 
     // Rather than forcing dicts into here, allow delegates to do so, for flexibility
     // (hopefully the runtime will be smart enough to inline stuff here...)
     public delegate T? RelinkMap<T>(T type) where T : MemberReference;
     
     public RelinkerProcessor(
-        RelinkMap<TypeReference> typeRelinker,
-        RelinkMap<FieldReference> fieldRelinker,
-        RelinkMap<MethodReference> methodRelinker
-        // RelinkMap<PropertyReference> propertyRelinker,
-        // RelinkMap<EventReference> eventRelinker
+        RelinkerConfig config
         ) {
-        this.typeRelinker = typeRelinker;
-        this.fieldRelinker = fieldRelinker;
-        this.methodRelinker = methodRelinker;
+        this.config = config;
+        this.typeRelinker = config.GetNew; // TODO: Replace this with direct calls
+        this.fieldRelinker = config.GetNew;
+        this.methodRelinker = config.GetNew;
         // this.propertyRelinker = propertyRelinker;
         // this.eventRelinker = eventRelinker;
     }
@@ -427,4 +425,54 @@ public class RelinkerProcessor : IProcessor<TypeDefinition> {
     }
 
     #endregion
+}
+
+public sealed class RelinkerConfig {
+    private readonly Dictionary<TypeRefUID, TypeDefinition> movedTypes = new();
+    private readonly Dictionary<FieldRefUID, FieldDefinition> movedFields = new();
+    private readonly Dictionary<PropertyRefUID, PropertyDefinition> movedProperties = new();
+    private readonly Dictionary<EventRefUID, EventDefinition> movedEvents = new();
+    private readonly Dictionary<MethodRefUID, MethodDefinition> movedMethods = new();
+
+    public RelinkerConfig() { }
+
+    // TODO: Proper errors on Add failure
+    public void Moved(TypeReference old, TypeDefinition @new) {
+        movedTypes.Add(old.ToUID(), @new);
+    }
+    public void Moved(FieldReference old, FieldDefinition @new) {
+        movedFields.Add(old.ToUID(), @new);
+    }
+
+    public void Moved(PropertyReference old, PropertyDefinition @new) {
+        movedProperties.Add(old.ToUID(), @new);
+    }
+
+    public void Moved(EventReference old, EventDefinition @new) {
+        movedEvents.Add(old.ToUID(), @new);
+    }
+
+    public void Moved(MethodReference old, MethodDefinition @new) {
+        movedMethods.Add(old.ToUID(), @new);
+    }
+
+    public TypeReference? GetNew(TypeReference m) {
+        return movedTypes.GetValueOrDefault(m.ToUID());
+    }
+
+    public FieldReference? GetNew(FieldReference f) {
+        return movedFields.GetValueOrDefault(f.ToUID());
+    }
+
+    public PropertyReference? GetNew(PropertyReference p) {
+        return movedProperties.GetValueOrDefault(p.ToUID());
+    }
+
+    public EventReference? GetNew(EventReference e) {
+        return movedEvents.GetValueOrDefault(e.ToUID());
+    }
+
+    public MethodReference? GetNew(MethodReference m) {
+        return movedMethods.GetValueOrDefault(m.ToUID());
+    }
 }

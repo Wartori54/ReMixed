@@ -7,30 +7,41 @@ using ReMixed.Transformer;
 namespace ReMixed.Processor;
 
 public class TypeMoverGenerator : IGenerator<TypeDefinition, Collection<TypeDefinition>> {
-    private readonly PatchPlatform platform;
-    
-    private readonly Dictionary<FieldRefUID, FieldReference> copiedFields;
-    private readonly Dictionary<PropertyRefUID, PropertyDefinition> copiedProperties;
-    private readonly Dictionary<EventRefUID, EventDefinition> copiedEvents;
-    private readonly Dictionary<MethodRefUID, MethodDefinition> copiedMethods;
+    private readonly RelinkerConfig relinkerConfig;
+    private readonly string prefixId;
 
-    public TypeMoverGenerator(PatchPlatform patchPlatform, 
-        Dictionary<FieldRefUID, FieldReference>? fields = null,
-        Dictionary<PropertyRefUID, PropertyDefinition>? properties = null,
-        Dictionary<EventRefUID, EventDefinition>? events = null,
-        Dictionary<MethodRefUID, MethodDefinition>? methods = null) {
-        platform = patchPlatform;
-        copiedFields = fields ?? new();
-        copiedProperties = properties ?? new();
-        copiedEvents = events ?? new();
-        copiedMethods = methods ?? new();
+    private TypeMoverGenerator(
+        string id,
+        RelinkerConfig rconfig
+        ) {
+        prefixId = id;
+        relinkerConfig = rconfig;
     }
 
-    public bool Applies(TypeDefinition target) {
-        foreach (CustomAttribute customAttribute in target.CustomAttributes) {
-            if (ILPatcher.TypeReferenceEqual(customAttribute.AttributeType, platform.ThisCecilDefs.MixinAttribute)) return false;
+    public sealed class Factory : IGeneratorFactory<TypeDefinition, Collection<TypeDefinition>> {
+        private readonly PatchPlatform platform;
+    
+        private readonly RelinkerConfig relinkerConfig;
+        private readonly string prefixId;
+
+        public Factory(PatchPlatform patchPlatform,
+            string id,
+            RelinkerConfig rconfig
+        ) {
+            platform = patchPlatform;
+            prefixId = id;
+            relinkerConfig = rconfig;
         }
-        return true;
+
+        public bool Applies(TypeDefinition target) {
+            foreach (CustomAttribute customAttribute in target.CustomAttributes) {
+                if (ILPatcher.TypeReferenceEqual(customAttribute.AttributeType, platform.ThisCecilDefs.MixinAttribute)) return false;
+            }
+            return true;
+        }
+        public IGenerator<TypeDefinition, Collection<TypeDefinition>> For(TypeDefinition target, Collection<TypeDefinition> dest) {
+            return new TypeMoverGenerator(prefixId, relinkerConfig);
+        }
     }
 
     public void Process(TypeDefinition target, Collection<TypeDefinition> container) {
@@ -40,7 +51,7 @@ public class TypeMoverGenerator : IGenerator<TypeDefinition, Collection<TypeDefi
             newType.Name = "Dup_" + newType.Name;
         }
         container.Add(newType);
-        MixinMergerTransformer mmTransformer = new(platform, copiedFields, copiedProperties, copiedEvents, copiedMethods);
+        MixinMergerTransformer mmTransformer = new(prefixId, relinkerConfig);
         mmTransformer.Perform(target, newType);
     }
 }

@@ -27,6 +27,7 @@ public class OrigClass {
 public class MixinClass {
     public int NewField;
     private string? NewString;
+    public int Field1;
 
     public MixinClass otherI;
 
@@ -45,11 +46,16 @@ public class MixinClass {
             NewField = 1,
             PropTest2 = null
         };
+        Field1 = 7;
         Console.WriteLine("CrazyMethod");
         Console.WriteLine(NewField);
         Console.WriteLine(i.NewString);
         OrigClass j = new();
         j.Field1 = 2;
+        MixinClass k = new() {
+            PropTest2 = 8
+        };
+        k.Field1 = 3;
         Console.WriteLine(j.Field1);
         Console.WriteLine(((OrigClass) (object)this).Field1);
     }
