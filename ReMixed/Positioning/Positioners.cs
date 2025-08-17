@@ -2,11 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.Design;
 using System.Linq;
+using System.Net.Http;
+using ReMixed.Injection;
 using ReMixed.Registry;
 
 namespace ReMixed.Positioning;
 
-public abstract class Positioner {
+public static class Positioners {
     private static Dictionary<string, Type>? ids;
 
     private static Dictionary<string, Type> Ids {
@@ -33,17 +35,29 @@ public abstract class Positioner {
         }
     }
 
-    public static Positioner FromAttribute(AtAttribute atAttribute) {
-        if (!Ids.TryGetValue(atAttribute.Value, out Type? positionerType)) {
-            throw new Exception($"Positioner for id {atAttribute.Value} not found!");
-        }
-
-        object? instance = Activator.CreateInstance(positionerType);
-        if (instance == null) throw new Exception($"Could not create instance of positioner: {positionerType.FullName}");
-
-        return (Positioner) instance;
+    public static void Register(Injector.InjectorRegistry registry) {
+        registry.RegisterPositioner("HEAD", HeadAction);
+        registry.RegisterPositioner("TAIL", TailAction);
     }
 
-    public abstract void Do(MethodPatchContext.Positioner positioner);
+    // Absolute positioners
+    private static void HeadAction(MethodPatchContext.Positioner p) {
+        p.GotoFirst();
+    }
+
+    private static void TailAction(MethodPatchContext.Positioner p) {
+        p.GotoLast();
+    }
+
+    // public static Positioner FromAttribute(AtAttribute atAttribute) {
+    //     if (!Ids.TryGetValue(atAttribute.Value, out Type? positionerType)) {
+    //         throw new Exception($"Positioner for id {atAttribute.Value} not found!");
+    //     }
+    //
+    //     object? instance = Activator.CreateInstance(positionerType);
+    //     if (instance == null) throw new Exception($"Could not create instance of positioner: {positionerType.FullName}");
+    //
+    //     return (Positioner) instance;
+    // }
 
 }

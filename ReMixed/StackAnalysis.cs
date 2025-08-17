@@ -375,13 +375,7 @@ public class StackAnalysis {
 
     public static Collection<Instruction> CopyInstructions(MethodBody bo, Func<object, MethodBody, Collection<Instruction>, object>? operandConverter) {
         Collection<Instruction> copy = [];
-        copy.AddRange(bo.Instructions.Select(o => {
-            Instruction c = Instruction.Create(OpCodes.Nop);
-            c.OpCode = o.OpCode;
-            c.Operand = o.Operand;
-            c.Offset = o.Offset;
-            return c;
-        }));
+        copy.AddRange(bo.Instructions.Select(Extensions.Clone));
 
         foreach (Instruction c in copy) {
             if (c.Operand is Instruction target) {

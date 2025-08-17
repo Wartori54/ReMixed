@@ -1,5 +1,6 @@
 using System;
 using Mono.Cecil;
+using ReMixed.MethodAttribute;
 using ReMixed.PlatformImpls;
 
 namespace ReMixed.Tests;
@@ -20,6 +21,10 @@ public class OrigClass {
     
     public OrigClass() {
         Console.WriteLine("Constructor");
+    }
+
+    public void TestMethod() {
+        Console.WriteLine("TestMethod");
     }
 }
 
@@ -58,6 +63,11 @@ public class MixinClass {
         k.Field1 = 3;
         Console.WriteLine(j.Field1);
         Console.WriteLine(((OrigClass) (object)this).Field1);
+    }
+
+    [Overwrite("TestMethod")]
+    public void TestOverwrite() {
+        Console.WriteLine("TestOvewrite");
     }
 }
 

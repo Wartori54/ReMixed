@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Mono.Cecil;
 using Mono.Collections.Generic;
+using ReMixed.PlatformImpls;
 using ReMixed.Processor;
 using ReMixed.Transformer;
 
@@ -14,6 +15,9 @@ public static class MixinApply {
         List<TypeDefinition> targetTypes = [];
         List<ITransformerFactory<FieldDefinition, FieldDefinition>> fieldTransformerFactories = [
             new FieldRetargetMixin.Factory(rconfig)
+        ];
+        List<ITransformerFactory<MethodDefinition, MethodDefinition>> methodTransformerFactories = [
+            new MethodMPATransformer.Factory(platform)
         ];
         // Merge all types
         MixinMergerTransformer.Factory trFactory = new(platform, id, rconfig);
@@ -39,8 +43,12 @@ public static class MixinApply {
                     }
                     tMoverFactory.For(nested, typeTarget.NestedTypes).Process(nested, typeTarget.NestedTypes);
                 }
+                foreach (ITransformerFactory<MethodDefinition, MethodDefinition> trFact in methodTransformerFactories) {
+                    ApplySymmetricTransformer(trFact, type.Methods, typeTarget.Methods);
+                }
             }
         }
+        platform.Flush();
 
         // Relink!
         foreach (TypeDefinition targetType in targetTypes) {

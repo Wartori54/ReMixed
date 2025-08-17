@@ -125,9 +125,7 @@ public static class MemberCloner {
         foreach (Instruction instruction in source.Instructions) {
             // Cecil wants to prevent creating instructions with the wrong operand
             // But code is jank that way, so trick it into giving us an instr and then just overwrite it entirely
-            Instruction newInstr = Instruction.Create(OpCodes.Nop);
-            newInstr.OpCode = instruction.OpCode;
-            newInstr.Offset = instruction.Offset;
+            Instruction newInstr = instruction.Clone();
             object? newOperand;
             switch (instruction.Operand) {
                 case string:

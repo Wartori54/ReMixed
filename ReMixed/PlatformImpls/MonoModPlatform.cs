@@ -24,6 +24,12 @@ public class MonoModPlatform : PatchPlatform {
     //     hooks.Add(new ILHook(target, GetManipulator(patch, target)));
     // }
 
+    public override MethodPatchContext MethodPatchContextFor(MethodDefinition method) {
+        throw new NotImplementedException();
+    }
+
+    public override void Flush() {
+    }
     public override void Dispose() {
         foreach (ILHook ilHook in hooks) {
             ilHook.Dispose();

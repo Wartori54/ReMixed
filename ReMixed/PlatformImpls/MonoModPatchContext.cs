@@ -23,7 +23,7 @@ public class MonoModPatchContext : MethodPatchContext {
         origMethod = origMethodBase;
     }
 
-    protected override Func<object, MethodBody, Collection<Instruction>, object> GetStAnalysisConverter()
+    protected override Func<object, MethodBody, Collection<Instruction>, object>? GetStAnalysisConverter()
         => StAnalysisConvert;
 
     public static object StAnalysisConvert(object operand, MethodBody bo, Collection<Instruction> instrs) {

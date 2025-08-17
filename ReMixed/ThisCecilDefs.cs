@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Mono.Cecil;
@@ -64,6 +65,13 @@ public class ThisCecilDefs {
         CIRSetReturnValue = CIRReference.Methods.First(m => m.Name == nameof(ILPatcher.CallbackInfoRet<int>.SetReturnValue));
         AtAttribute = ThisModule.GetType(typeof(AtAttribute));
         MixinAttribute = ThisModule.GetType(typeof(MixinAttribute));
+    }
+    
+    private readonly Dictionary<Type, TypeReference> reflCache = new();
+
+    public TypeReference GetReflection(Type type) {
+        if (reflCache.TryGetValue(type, out TypeReference? value)) return value;
+        return reflCache[type] = ThisModule.GetType(type);
     }
 
     private GenericInstanceType BuildGenericTypeInstance(TypeReference tref, Type type) => BuildGenericTypeInstance(tref, tref.Module.ImportReference(type));

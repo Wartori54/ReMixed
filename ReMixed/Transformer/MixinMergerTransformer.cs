@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using Microsoft.CodeAnalysis;
 using Mono.Cecil;
 using Mono.Cecil.Rocks;
 using Mono.Collections.Generic;
@@ -40,7 +39,7 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
         relinkerConfig = rconfig;
     }
 
-    public class Factory : ITransformerFactory<TypeDefinition, TypeDefinition> {
+    public sealed class Factory : ITransformerFactory<TypeDefinition, TypeDefinition> {
         public int Pass => -1;
         
         private readonly PatchPlatform platform;

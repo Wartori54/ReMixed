@@ -2,13 +2,12 @@
 
 using System;
 using Mono.Cecil;
+using Mono.Cecil.Cil;
 using ReMixed.MethodAttribute;
-using ReMixed.Registry;
 
 namespace ReMixed.Injection;
 
-[InjectorMPA(typeof(InjectAttribute))]
-public class MethodCallInjector : Injector {
+public sealed class MethodCallInjector : Injector {
     private readonly CIInjector ciInjector;
     private readonly InstanceInjector instanceInjector;
 
@@ -21,22 +20,26 @@ public class MethodCallInjector : Injector {
         else
             throw new NotImplementedException();
     };
-    
-    protected MethodCallInjector(MethodPatchContext context) : base(context) {
+
+    private MethodCallInjector(MethodPatchContext context) : base(context) {
         ciInjector = Create<CIInjector>(InjectorIds.CIInjectorNonCancellable);
         instanceInjector = Create<InstanceInjector>(InjectorIds.InstanceInjector);
     }
 
-    public override void Inject(MethodPatchContext.Cursor cursor, PatchableMethodDefinition patchableMethodDefinition, MethodReference injectMethod) {
+    public override MethodPatchContext.Positioner GetRentSize(MethodPatchContext.Positioner positioner) {
+        // No space required
+        return positioner;
+    }
+    public override void Inject(MethodPatchContext.Cursor cursor, IMethodSignature targetSig, MethodDefinition injectMethod) {
         // Do analysis
-        (bool shouldEmitInstance, int capturedArgs) = AnalyzeMethodReference(injectMethod, patchableMethodDefinition);
+        (bool shouldEmitInstance, int capturedArgs) = AnalyzeMethodReference(injectMethod, targetSig);
         // Figure out instance, before anything
         if (shouldEmitInstance) {
-            EmitInstance(cursor, patchableMethodDefinition, injectMethod);
+            EmitInstance(cursor, targetSig, injectMethod);
         }
         
         // Push the CI
-        ciInjector.Inject(cursor, patchableMethodDefinition, injectMethod);
+        ciInjector.Inject(cursor, targetSig, injectMethod);
 
         // And emit args, notice that EmitLdarg works differently
         for (int i = 0; i < capturedArgs; i++) {
@@ -50,13 +53,13 @@ public class MethodCallInjector : Injector {
             cursor.EmitCallvirt(injectMethod);
     }
 
-    protected virtual void EmitInstance(MethodPatchContext.Cursor cursor, PatchableMethodDefinition patchableMethodDefinition, MethodReference injectMethod) {
+    private void EmitInstance(MethodPatchContext.Cursor cursor, IMethodSignature targetSig, MethodDefinition injectMethod) {
         cursor.EmitLdarg0();
     }
     
      // Verifies an injection method contains the correct arguments for its task
     private (bool shouldEmitInstance, int capturedArgs) AnalyzeMethodReference<T1, T2>(T1 injectedMethod, 
-        T2 destination) where T1 : IMethodSignature, IGenericParameterProvider where T2 : IMemberDefinition, IMethodSignature, IGenericParameterProvider {
+        T2 destination) where T1 : IMethodSignature, IGenericParameterProvider where T2 : IMethodSignature {
         if (injectedMethod.HasGenericParameters) { // TODO
             throw new NotImplementedException();
         }
@@ -104,13 +107,16 @@ public class CIInjector : Injector {
 
     public static InjectorRegistry.InjectorFactory FactoryNonCancellable => m => new CIInjector(m, false);
     public static InjectorRegistry.InjectorFactory FactoryCancellable => m => new CIInjector(m, true);
-    
-    public override void Inject(MethodPatchContext.Cursor cursor, PatchableMethodDefinition patchableMethodDefinition, MethodReference source) {
+
+    public override MethodPatchContext.Positioner GetRentSize(MethodPatchContext.Positioner positioner) {
+        return positioner;
+    }
+    public override void Inject(MethodPatchContext.Cursor cursor, IMethodSignature targetSig, MethodDefinition source) {
         // Verify the parameter
-        if (patchableMethodDefinition.ReturnType != patchableMethodDefinition.Module.TypeSystem.Void) {
+        if (targetSig.ReturnType.FullName != "System.Void") { // This void check is kinda ugly
             if (!ILPatcher.TypeReferenceEqual(source.Parameters[source.HasThis ? 1 : 0].ParameterType, 
-                    Platform.ThisCecilDefs.CIRReferenceM(patchableMethodDefinition.ReturnType))) {
-                throw new Exception($"Malformed injection method: Non-void injection must take a CallbackInfoRet<{patchableMethodDefinition.ReturnType}> as first arg");
+                    Platform.ThisCecilDefs.CIRReferenceM(targetSig.ReturnType))) {
+                throw new Exception($"Malformed injection method: Non-void injection must take a CallbackInfoRet<{targetSig.ReturnType}> as first arg");
             }
         } else {
             if (!ILPatcher.TypeReferenceEqual(source.Parameters[source.HasThis ? 1 : 0].ParameterType,
@@ -124,10 +130,10 @@ public class CIInjector : Injector {
         // (ldc.i4.1/0) -- present if ret value is not void; 0 means non-cancellable, 1 means cancellable
         // newobj CallbackInfo/CallbackInfoReturnable -- returnable when ret value is not void
         MethodReference ctor;
-        cursor.EmitLdstr(patchableMethodDefinition.Name);
+        cursor.EmitLdstr("TODO: Not implemented yet" /* targetSig.Name */); // TODO
         cursor.EmitLdcI4(cancellable ? 1 : 0);
-        if (patchableMethodDefinition.ReturnType != source.Module.TypeSystem.Void) {
-            ctor = Platform.ThisCecilDefs.CIRCtorT(patchableMethodDefinition.ReturnType);
+        if (targetSig.ReturnType != source.Module.TypeSystem.Void) {
+            ctor = Platform.ThisCecilDefs.CIRCtorT(targetSig.ReturnType);
         } else {
             ctor = Platform.ThisCecilDefs.CICtor;
         }
@@ -140,9 +146,58 @@ public class InstanceInjector : Injector {
     public static InjectorRegistry.InjectorFactory Factory => m => new InstanceInjector(m);
     protected InstanceInjector(MethodPatchContext context) : base(context) {
     }
-    
-    public override void Inject(MethodPatchContext.Cursor cursor, PatchableMethodDefinition patchableMethodDefinition, MethodReference source) {
+
+    public override MethodPatchContext.Positioner GetRentSize(MethodPatchContext.Positioner positioner) {
+        return positioner;
+    }
+    public override void Inject(MethodPatchContext.Cursor cursor, IMethodSignature targetSig, MethodDefinition source) {
         cursor.EmitLdarg0();
+    }
+}
+
+public sealed class OverwriteInjector : Injector {
+    public static InjectorRegistry.AttributeInjectorFactory AttributeFactory => (attr, m) => {
+        if (attr.At.Length != 1 || attr.At[0] != "HEAD") throw new InvalidOperationException("Overwrite requires position to be a single HEAD!");
+        return new OverwriteInjector(m);
+    };
+    
+    public OverwriteInjector(MethodPatchContext context) : base(context) {
+    }
+    
+    public override MethodPatchContext.Positioner GetRentSize(MethodPatchContext.Positioner positioner) {
+        if (positioner.Index != 0) throw new InvalidOperationException($"{nameof(OverwriteInjector)} must be positioned at the top!");
+        // Overwrite englobes everything
+        positioner.GotoLast();
+        return positioner;
+    }
+    
+    public override void Inject(MethodPatchContext.Cursor cursor, IMethodSignature targetSig, MethodDefinition source) {
+        EnsureSameSignature(targetSig, source);
+        
+        cursor.RemoveAll();
+
+        cursor.ClearLocals();
+
+        foreach (VariableDefinition variable in source.Body.Variables) {
+            cursor.CreateLocal(variable.VariableType);
+        }
+        
+        foreach (Instruction instruction in source.Body.Instructions) {
+            cursor.Emit(instruction.Clone());
+        }
+    }
+
+    private static void EnsureSameSignature(IMethodSignature targetSig, IMethodSignature source) {
+        if (targetSig.Parameters.Count != source.Parameters.Count) throw new InvalidOperationException("Signatures must be identical (different parameter count)");
+        for (int i = 0; i < targetSig.Parameters.Count; i++) {
+            if (!ILPatcher.TypeReferenceEqual(targetSig.Parameters[i].ParameterType, source.Parameters[i].ParameterType)) {
+                throw new InvalidOperationException($"Signatures must be identical (different {i}-th parameter)");
+            }
+        }
+        if (targetSig.ReturnType != source.ReturnType) throw new InvalidOperationException("Signatures must be identical (different return type)");
+        if (targetSig.HasThis != source.HasThis) throw new InvalidOperationException("Signatures must be identical (different HasThis)");
+        if (targetSig.ExplicitThis != source.ExplicitThis) throw new InvalidOperationException("Signatures must be identical (different ExplicitThis)");
+        if (targetSig.CallingConvention != source.CallingConvention) throw new InvalidOperationException("Signatures must be identical (different CallingConvention)");
     }
 }
 

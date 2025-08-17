@@ -11,7 +11,7 @@ public partial class TargetClassExtension : Extends<TargetClass> {
     public TargetClassExtension(TargetClass obj) : base(obj) {
     }
 
-    [ReMixed.MethodAttribute.Inject("Add"), At("TAIL")]
+    [ReMixed.MethodAttribute.Inject("Add", ["TAIL"]), At("TAIL")]
     [Inject("TAIL", true)]
     public void Add(ILPatcher.CallbackInfoRet<int> cir) {
         cir.Cancel(_this.a + _this.b + this.c);

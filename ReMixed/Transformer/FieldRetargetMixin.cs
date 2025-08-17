@@ -8,7 +8,7 @@ namespace ReMixed.Transformer;
 
 public class FieldRetargetMixin : ITransformer<FieldDefinition, FieldDefinition> {
     public sealed class Factory(RelinkerConfig config) : ITransformerFactory<FieldDefinition, FieldDefinition> {
-        public int Pass => 0;
+        public int Pass => -1;
         public IEnumerable<FieldDefinition>? AppliesTo(FieldDefinition memberDef, Collection<FieldDefinition> targets) {
             return targets.Where(t => t.Name == memberDef.Name);
         }

@@ -53,11 +53,13 @@ public abstract class MethodPatchContext {
         }
     }
 
+    // Hint: RO Cursor
     public class Positioner {
         public int Index { get; private set; } = 0;
+        protected readonly Collection<Instruction> Instructions;
+        
         public Instruction? Next => Index < Instructions.Count ? Instructions[Index] : null;
         public Instruction? Previous => Index > 0 ? Instructions[Index - 1] : null;
-        protected readonly Collection<Instruction> Instructions;
 
         public Positioner(Collection<Instruction> positionerInstructions) {
             Instructions = positionerInstructions;
@@ -101,6 +103,12 @@ public abstract class MethodPatchContext {
             Index = Instructions.IndexOf(target);
             return this;
         }
+
+        public virtual Positioner Clone() {
+            return new Positioner(Instructions) {
+                Index = Index,
+            };
+        }
     }
     
     public class Cursor : Positioner {
@@ -114,12 +122,22 @@ public abstract class MethodPatchContext {
         }
 
         public Cursor RemoveNext() {
-            throw new NotSupportedException();
+            il.RemoveAt(Index);
+            return this;
         }
 
-        private void Emit(Instruction instruction) {
+        public Cursor RemoveAll() {
+            il.Clear();
+            return this;
+        }
+
+        public void Emit(Instruction instruction) {
+            if (il.Count == 0) {
+                il.Append(instruction);
+                return;
+            }
             if (Index == 0)
-                il.InsertBefore(Instructions[0], instruction); // Why cant you use indexes with this :(
+                il.InsertBefore(Instructions[0], instruction); // Why cant you use indecies with this :(
             else
                 il.InsertAfter(Index-1, instruction);
             MoveIndex(1);
@@ -234,6 +252,17 @@ public abstract class MethodPatchContext {
             VariableDefinition varDef = new(type);
             body.AddVariable(varDef);
             return varDef;
+        }
+
+        public VariableDefinition GetLocal(int index) {
+            ArgumentOutOfRangeException.ThrowIfNegative(index);
+            ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, body.Variables.Count);
+            return body.Variables[index];
+        }
+
+        public Cursor ClearLocals() {
+            body.Variables.Clear();
+            return this;
         }
         
         

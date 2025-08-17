@@ -558,6 +558,7 @@ public class ILPatcher {
     //     }
     // }
 
+    // TODO: Make this a struct for perf purposes (ref struct even??)
     public class CallbackInfo {
         private readonly bool cancelable;
         private bool cancelled;

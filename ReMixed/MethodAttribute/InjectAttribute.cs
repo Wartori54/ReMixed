@@ -2,7 +2,7 @@ using ReMixed.Positioning;
 
 namespace ReMixed.MethodAttribute;
 
-public class InjectAttribute(
+public sealed class InjectAttribute(
     // Target name for the injection
     string targetName, 
     // Ids of Ats to pair properly

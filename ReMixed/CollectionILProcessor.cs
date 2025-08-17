@@ -9,6 +9,7 @@ namespace ReMixed;
 public sealed class CollectionILProcessor {
     private readonly Collection<Instruction> instructions;
     private readonly IBodyDataProvider body;
+    public int Count => instructions.Count;
 
     public CollectionILProcessor(Collection<Instruction> instructions, IBodyDataProvider body) {
         this.instructions = instructions;

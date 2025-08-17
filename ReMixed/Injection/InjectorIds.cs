@@ -2,7 +2,7 @@ using System.Reflection;
 
 namespace ReMixed.Injection;
 
-public sealed record InjectorID(string id);
+public record struct InjectorID(string Id);
 
 public static class InjectorIds {
     // Everything in here will be initialized through reflection, just make the ide shut up

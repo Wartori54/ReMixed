@@ -557,6 +557,16 @@ public static class Extensions {
         if (!dict.TryGetValue(key, out TV? value)) throw new Exception(msg);
         return value;
     }
+
+    public static Instruction Clone(this Instruction instruction) {
+        // Cecil wants to prevent creating instructions with the wrong operand
+        // But code is jank that way, so trick it into giving us an instr and then just overwrite it entirely
+        Instruction newInstr = Instruction.Create(OpCodes.Nop);
+        newInstr.OpCode = instruction.OpCode;
+        newInstr.Operand = instruction.Operand;
+        newInstr.Offset = instruction.Offset;
+        return newInstr;
+    }
     
     
 }
