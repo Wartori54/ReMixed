@@ -44,7 +44,7 @@ public static class MixinApply {
                     tMoverFactory.For(nested, typeTarget.NestedTypes).Process(nested, typeTarget.NestedTypes);
                 }
                 foreach (ITransformerFactory<MethodDefinition, MethodDefinition> trFact in methodTransformerFactories) {
-                    ApplySymmetricTransformer(trFact, type.Methods, typeTarget.Methods);
+                    ApplySymmetricTransformer(trFact, typeTarget.Methods, typeTarget.Methods);
                 }
             }
         }

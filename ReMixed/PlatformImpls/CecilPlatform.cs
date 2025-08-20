@@ -25,10 +25,11 @@ public class CecilPlatform : PatchPlatform {
     }
     
     private sealed class MethodPool : PatchableMethodDefinition.IMethodPool {
-        private readonly Dictionary<MethodDefinition, PatchableMethodDefinition> methods = new();
+        private readonly Dictionary<MethodRefUID, PatchableMethodDefinition> methods = new();
         public PatchableMethodDefinition Obtain(MethodDefinition methodDefinition) {
-            if (methods.TryGetValue(methodDefinition, out PatchableMethodDefinition? value)) return value;
-            return methods[methodDefinition] = new PatchableMethodDefinition(methodDefinition);
+            MethodRefUID mRefUID = methodDefinition.ToUID();
+            if (methods.TryGetValue(mRefUID, out PatchableMethodDefinition? value)) return value;
+            return methods[mRefUID] = new PatchableMethodDefinition(methodDefinition);
         }
 
         public void Flush() {

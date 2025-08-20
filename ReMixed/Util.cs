@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using Mono.Cecil;
 using System;
 using System.Reflection;
+using ICustomAttributeProvider = Mono.Cecil.ICustomAttributeProvider;
 
 namespace ReMixed;
 
@@ -90,4 +91,6 @@ public class Util {
         }
         return arrHash;
     }
+    
+    
 }

@@ -9,7 +9,7 @@ namespace ReMixed.Injection;
 
 public sealed class MethodCallInjector : Injector {
     private readonly CIInjector ciInjector;
-    private readonly InstanceInjector instanceInjector;
+    private readonly Injector instanceInjector;
 
     public static InjectorRegistry.InjectorFactory Factory => m => new MethodCallInjector(m);
 
@@ -23,7 +23,7 @@ public sealed class MethodCallInjector : Injector {
 
     private MethodCallInjector(MethodPatchContext context) : base(context) {
         ciInjector = Create<CIInjector>(InjectorIds.CIInjectorNonCancellable);
-        instanceInjector = Create<InstanceInjector>(InjectorIds.InstanceInjector);
+        instanceInjector = Create(InjectorIds.InstanceInjector);
     }
 
     public override MethodPatchContext.Positioner GetRentSize(MethodPatchContext.Positioner positioner) {
@@ -54,7 +54,7 @@ public sealed class MethodCallInjector : Injector {
     }
 
     private void EmitInstance(MethodPatchContext.Cursor cursor, IMethodSignature targetSig, MethodDefinition injectMethod) {
-        cursor.EmitLdarg0();
+        instanceInjector.Inject(cursor, targetSig, injectMethod);
     }
     
      // Verifies an injection method contains the correct arguments for its task
@@ -63,12 +63,16 @@ public sealed class MethodCallInjector : Injector {
         if (injectedMethod.HasGenericParameters) { // TODO
             throw new NotImplementedException();
         }
-
-        if (injectedMethod.HasThis != destination.HasThis) throw new Exception("Malformed injection method: HasThis must match between injection and target!");
+        
+        // Allow instance -> instance, static -> static and static -> instance
+        if (injectedMethod.HasThis && !destination.HasThis) {
+            throw new Exception("Malformed injection method: Tried to inject a non-static method into a static one!");
+        }
         bool shouldEmitInstance = injectedMethod.HasThis;
         
         if (injectedMethod.Parameters.Count == 0) throw new Exception("Malformed injection method: Must take a CallbackInfo or CallbackInfoReturnable as first arg!"); // TODO: Doc errors
         
+        // Java mixins have the CI and CIR at the end of the argument list, TODO: should this be changed?
         // Must start with a callback info of some type
         if (!ILPatcher.TypeReferenceEqual(injectedMethod.Parameters[0].ParameterType, Platform.ThisCecilDefs.CIReference) && 
             !ILPatcher.TypeReferenceEqual(injectedMethod.Parameters[0].ParameterType, Platform.ThisCecilDefs.CIRReferenceM(destination.ReturnType)))
@@ -77,13 +81,13 @@ public sealed class MethodCallInjector : Injector {
         // Can be a ci alone
         if (injectedMethod.Parameters.Count == 1) // Captures no arguments
             return (shouldEmitInstance, 0);
+        
+        if (injectedMethod.Parameters.Count != destination.Parameters.Count + 1 /* CI or CIR */)
+            throw new Exception("Malformed injection method: Must take the same amount of arguments as well as a CallbackInfo or CallbackInfoReturnable as first arg!");
 
         // Check next args
         int arg;
         for (arg = 0; arg < destination.Parameters.Count; arg++) {
-            if (arg + 1 >= injectedMethod.Parameters.Count) {
-                break;
-            }
 #if VERIFY_ARGS
             TypeReference paramTypeInj = injectedMethod.Parameters[arg+1].ParameterType;
             TypeReference paramTypeDest = destination.Parameters[arg].ParameterType;
@@ -101,6 +105,7 @@ public sealed class MethodCallInjector : Injector {
 public class CIInjector : Injector {
     private readonly bool cancellable;
     
+    // TODO: Add ability to capture return value
     protected CIInjector(MethodPatchContext context, bool cancel) : base(context) {
         cancellable = cancel;
     }
@@ -114,12 +119,12 @@ public class CIInjector : Injector {
     public override void Inject(MethodPatchContext.Cursor cursor, IMethodSignature targetSig, MethodDefinition source) {
         // Verify the parameter
         if (targetSig.ReturnType.FullName != "System.Void") { // This void check is kinda ugly
-            if (!ILPatcher.TypeReferenceEqual(source.Parameters[source.HasThis ? 1 : 0].ParameterType, 
+            if (!ILPatcher.TypeReferenceEqual(source.Parameters[0].ParameterType, 
                     Platform.ThisCecilDefs.CIRReferenceM(targetSig.ReturnType))) {
                 throw new Exception($"Malformed injection method: Non-void injection must take a CallbackInfoRet<{targetSig.ReturnType}> as first arg");
             }
         } else {
-            if (!ILPatcher.TypeReferenceEqual(source.Parameters[source.HasThis ? 1 : 0].ParameterType,
+            if (!ILPatcher.TypeReferenceEqual(source.Parameters[0].ParameterType,
                     Platform.ThisCecilDefs.CIReference)) {
                 throw new Exception($"Malformed injection method: Void injection must take a CallbackInfo as first arg");
             }
@@ -137,14 +142,13 @@ public class CIInjector : Injector {
         } else {
             ctor = Platform.ThisCecilDefs.CICtor;
         }
-        cursor.EmitNewobj(ctor);
+        cursor.EmitNewobj(Context.Method.Module.ImportReference(ctor));
     }
 }
 
-public class InstanceInjector : Injector {
-
-    public static InjectorRegistry.InjectorFactory Factory => m => new InstanceInjector(m);
-    protected InstanceInjector(MethodPatchContext context) : base(context) {
+public class SimpleInstanceInjector : Injector {
+    public static InjectorRegistry.InjectorFactory Factory => m => new SimpleInstanceInjector(m);
+    protected SimpleInstanceInjector(MethodPatchContext context) : base(context) {
     }
 
     public override MethodPatchContext.Positioner GetRentSize(MethodPatchContext.Positioner positioner) {

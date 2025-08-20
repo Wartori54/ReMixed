@@ -134,6 +134,7 @@ public abstract class MethodPatchContext {
         public void Emit(Instruction instruction) {
             if (il.Count == 0) {
                 il.Append(instruction);
+                MoveIndex(1);
                 return;
             }
             if (Index == 0)
@@ -269,21 +270,22 @@ public abstract class MethodPatchContext {
     }
     
     public static void LogAllInstrs(LegCursor il) => LogAllInstrs(il.Context);
-    public static void LogAllInstrs(MethodPatchContext il) {
+    public static void LogAllInstrs(MethodPatchContext il) => LogAllInstrs(il.Method);
+    public static void LogAllInstrs(MethodDefinition method) {
         Func<StringBuilder, Instruction, StringBuilder> logInstr =
             typeof(ILContext).GetMethod("ToString", BindingFlags.Static | BindingFlags.NonPublic)!
                 .CreateDelegate<Func<StringBuilder, Instruction, StringBuilder>>();
         Console.WriteLine("Logging instructions");
-        Console.WriteLine("In method " + il.Method.FullName);
+        Console.WriteLine("In method " + method.FullName);
         StringBuilder s = new();
-        for (int i = 0; i < il.Method.Body.Instructions.Count; i++) {
-            Instruction? instr = il.Method.Body.Instructions[i];
+        for (int i = 0; i < method.Body.Instructions.Count; i++) {
+            Instruction? instr = method.Body.Instructions[i];
             try {
                 s.Append($"{i} ");
                 logInstr.Invoke(s, instr);
                 if (instr.Operand is Instruction jInstr) {
                     s.Remove(s.Length - 1, 1);
-                    s.AppendLine($" -> {il.Method.Body.Instructions.IndexOf(jInstr)}");
+                    s.AppendLine($" -> {method.Body.Instructions.IndexOf(jInstr)}");
                 }
             }
             catch (InvalidCastException) {

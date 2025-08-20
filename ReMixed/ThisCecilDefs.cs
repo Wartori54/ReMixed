@@ -13,6 +13,8 @@ public class ThisCecilDefs {
     }
 
     public readonly ModuleDefinition ThisModule;
+    
+    public TypeSystem TypeSystem => ThisModule.TypeSystem;
 
     public readonly TypeDefinition CIReference;
     private readonly TypeDefinition CIRReference;
@@ -52,7 +54,8 @@ public class ThisCecilDefs {
     }
 
     public readonly TypeReference MixinAttribute;
-    public readonly TypeReference AtAttribute;
+    public readonly TypeDefinition MergedAttribute;
+    public readonly MethodDefinition MergedAttributeCtor;
     
     public ThisCecilDefs(ModuleDefinition moduleDefinition) {
         ThisModule = moduleDefinition;
@@ -63,8 +66,9 @@ public class ThisCecilDefs {
         CIIsCanceled = CIReference.Methods.First(m => m.Name == nameof(ILPatcher.CallbackInfo.IsCanceled));
         CIRGetRet = CIRReference.Methods.First(m => m.Name == nameof(ILPatcher.CallbackInfoRet<int>.GetRet)); // int is used as a place holder here
         CIRSetReturnValue = CIRReference.Methods.First(m => m.Name == nameof(ILPatcher.CallbackInfoRet<int>.SetReturnValue));
-        AtAttribute = ThisModule.GetType(typeof(AtAttribute));
         MixinAttribute = ThisModule.GetType(typeof(MixinAttribute));
+        MergedAttribute = ThisModule.GetType(typeof(MergedAttribute));
+        MergedAttributeCtor = MergedAttribute.Methods.First(IsCtor);
     }
     
     private readonly Dictionary<Type, TypeReference> reflCache = new();

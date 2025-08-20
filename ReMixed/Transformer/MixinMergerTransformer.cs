@@ -15,7 +15,7 @@ namespace ReMixed.Transformer;
 /// </summary>
 public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinition> {
 
-    private readonly string prefixId;
+    private readonly string? prefixId;
     
     private readonly Dictionary<TypeReference, TypeIndex> mixinTypeIndex = new();
 
@@ -26,6 +26,7 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
     private readonly Dictionary<MethodDefinition, (EventDefinition, MethodInEventType)> methodToEvent = new();
 
     private readonly RelinkerConfig relinkerConfig;
+    private readonly PatchPlatform platform;
     
     // public Dictionary<FieldReference, FieldReference> CopiedFields => copiedFields;
     // public Dictionary<PropertyDefinition, PropertyDefinition> CopiedProperties => copiedProperties;
@@ -33,25 +34,33 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
     // public Dictionary<MethodDefinition, MethodDefinition> CopiedMethods => copiedMethods;
 
     internal MixinMergerTransformer( 
-        string id,
-        RelinkerConfig rconfig) {
+        string? id,
+        RelinkerConfig rconfig,
+        PatchPlatform pPlatform) {
         prefixId = id;
         relinkerConfig = rconfig;
+        platform = pPlatform;
     }
 
     public sealed class Factory : ITransformerFactory<TypeDefinition, TypeDefinition> {
+        private static readonly HashSet<string> UsedIds = [];
         public int Pass => -1;
         
         private readonly PatchPlatform platform;
-        private readonly string prefixId;
+        private readonly string? prefixId;
         private readonly RelinkerConfig relinkerConfig;
         
         public Factory(PatchPlatform patchPlatform, 
-            string id,
+            string? id,
             RelinkerConfig rconfig) {
             platform = patchPlatform;
             prefixId = id;
             relinkerConfig = rconfig;
+            if (id == null) return;
+            if (id == "") throw new ArgumentException("Empty ids cannot be used!");
+            if (!UsedIds.Add(id)) {
+                throw new ArgumentException($"Id {id} is already in use!");
+            }
         }
         
         public IEnumerable<TypeDefinition>? AppliesTo(TypeDefinition memberDef, Collection<TypeDefinition> targets) {
@@ -72,7 +81,7 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
             return targets.Where(t => ILPatcher.TypeReferenceEqual(targetMixinType ?? throw new UnreachableException(), t));
         }
         
-        public ITransformer<TypeDefinition, TypeDefinition> For(TypeDefinition patch, TypeDefinition target) => new MixinMergerTransformer(prefixId, relinkerConfig);
+        public ITransformer<TypeDefinition, TypeDefinition> For(TypeDefinition patch, TypeDefinition target) => new MixinMergerTransformer(prefixId, relinkerConfig, platform);
     }
     
     // source -> mixin, target -> type targeted by the mixin
@@ -144,20 +153,19 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
 
     private void CopyField(TypeDefinition dest, FieldDefinition src) {
         if (relinkerConfig.GetNew(src) != null) return;
-        if (IndexType(dest).Identifiers.Contains(src.Name)) {
+        if (CheckIdentifierCollision(src.Name, dest))
             Console.WriteLine($"Warning: Field with identifier {src.FullName} already present in type {dest.FullName}");
-        }
         FieldDefinition copy = src.Clone();
         // AddToRelinkTargets(copy.FieldType, copy);
         dest.Fields.Add(copy);
+        RenameRef(copy);
         relinkerConfig.Moved(src, copy);
     }
 
     private void CopyProperty(TypeDefinition dest, PropertyDefinition src) {
         if (relinkerConfig.GetNew(src) != null) return;
-        if (IndexType(dest).Identifiers.Contains(src.Name)) {
+        if (CheckIdentifierCollision(src.Name, dest))
             Console.WriteLine($"Warning: Field with identifier {src.FullName} already present in type {dest.FullName}");
-        }
         PropertyDefinition copy = src.Clone();
         if (copy.GetMethod != null) methodToProperty[copy.GetMethod] = (copy, MethodInPropType.Get);
         if (copy.SetMethod != null) methodToProperty[copy.SetMethod] = (copy, MethodInPropType.Set);
@@ -166,12 +174,13 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
         }
         // AddToRelinkTargets(copy.PropertyType, copy);
         dest.Properties.Add(copy);
+        RenameRef(copy);
         relinkerConfig.Moved(src, copy);
     }
 
     private void CopyEvent(TypeDefinition dest, EventDefinition src) {
         if (relinkerConfig.GetNew(src) != null) return;
-        if (IndexType(dest).Identifiers.Contains(src.Name)) 
+        if (CheckIdentifierCollision(src.Name, dest))
             Console.WriteLine($"Warning: Event with identifier {src.FullName} already present in type {dest.FullName}");
         EventDefinition copy = src.Clone();
         if (copy.AddMethod != null) methodToEvent[copy.AddMethod] = (copy, MethodInEventType.Add);
@@ -182,16 +191,20 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
         }
         // AddToRelinkTargets(copy.EventType, copy);
         dest.Events.Add(copy);
+        RenameRef(copy);
         relinkerConfig.Moved(src, copy);
     }
 
     private void CopyMethod(TypeDefinition dest, MethodDefinition src) {
         if (relinkerConfig.GetNew(src) != null) return;
+        bool skipPrefix = false;
         // Ignore .ctor specifically
         if (src.Name == ".ctor") {
             // But register the .ctor as moved
             bool moved = false;
+            bool empty = true;
             foreach (MethodDefinition destCtor in dest.GetConstructors()) {
+                empty = false;
                 if (destCtor.Parameters.Count != src.Parameters.Count) continue;
                 bool match = true;
                 for (int i = 0; i < src.Parameters.Count; i++) {
@@ -204,14 +217,26 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
                     break;
                 }
             }
-            if (!moved) throw new Exception($"{src.DeclaringType.FullName} contains a constructor for which there is no matching one in {dest.FullName}");
-            return;
+            if (!empty) { // Empty methods should be populated with whatever there is
+                if (!moved)
+                    throw new Exception($"{src.DeclaringType.FullName} contains a constructor for which there is no matching one in {dest.FullName}");
+                return;
+            }
+            skipPrefix = true;
         }
-        if (IndexType(dest).Identifiers.Contains(src.Name)) 
+        if (src.Name == ".cctor") {
+            if (dest.GetStaticConstructor() == null) {
+                skipPrefix = true;
+            } else {
+                throw new NotImplementedException("Merging static constructors is not implemented");
+            }
+        }
+        if (CheckIdentifierCollision(src.Name, dest))
             Console.WriteLine($"Warning: Method with identifier {src.FullName} already present in type {dest.FullName}");
         MethodDefinition copy = src.Clone();
         // Relink: ret value, parameters, overrides, gparameters, mbody's (this param, variables)
         dest.Methods.Add(copy);
+        RenameRef(copy, skipPrefix);
         relinkerConfig.Moved(src, copy);
         
         // Also fix the method in the copied prop
@@ -276,6 +301,30 @@ public class MixinMergerTransformer : ITransformer<TypeDefinition, TypeDefinitio
         type.ForEachMember(member => index.Identifiers.Add(member.Name));
         mixinTypeIndex[type] = index;
         return index;
+    }
+
+    private bool CheckIdentifierCollision(string name, TypeDefinition dest) {
+        return prefixId == null && IndexType(dest).Identifiers.Contains(name);
+    }
+
+    private void RenameRef(MemberReference member, bool skipPrefix = false) {
+        if (member is ICustomAttributeProvider cap) {
+            cap.CustomAttributes.Add(
+                new CustomAttribute(member.Module.ImportReference(platform.ThisCecilDefs.MergedAttributeCtor)) {
+                    ConstructorArguments = {
+                        new CustomAttributeArgument(
+                            platform.ThisCecilDefs.TypeSystem.String,
+                            member.Name
+                        )
+                    }
+                }
+            );
+        }
+
+        if (skipPrefix) return;
+        if (prefixId != null) {
+            member.Name =  prefixId + "_" + member.Name;
+        }
     }
 
     private record TypeIndex {

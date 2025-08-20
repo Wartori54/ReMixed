@@ -119,7 +119,7 @@ public class PatchableMethodDefinition : IMemberDefinition, IMethodSignature, IG
 
             if (blob.GlobalSize < blob.BlobInstructions.Count) { // Insert the leftover ones
                 for (int i = blob.GlobalSize; i < blob.BlobInstructions.Count; i++) {
-                    targetInstrs.Insert(blob.GlobalIndex + blob.GlobalSize, blob.BlobInstructions[i]);
+                    targetInstrs.Insert(blob.GlobalIndex + blob.GlobalSize + i, blob.BlobInstructions[i]);
                 }
             } else if (blob.GlobalSize > blob.BlobInstructions.Count) { // Remove the leftover ones
                 for (int i = blob.BlobInstructions.Count; i < blob.GlobalSize; i++) {
@@ -130,6 +130,7 @@ public class PatchableMethodDefinition : IMemberDefinition, IMethodSignature, IG
         blobList.Clear();
         
         // Done!
+        MethodPatchContext.LogAllInstrs(patchingMethod);
     }
 
     protected virtual CollectionILProcessor.IBodyDataProvider GetBodyProvider() {
@@ -139,18 +140,26 @@ public class PatchableMethodDefinition : IMemberDefinition, IMethodSignature, IG
     // Get a new blob in the bounds specified and by cloning the instructions
     private Blob NewBlob(int index, int size) {
         Blob blob = new(InstructionSubClone(index, size), index, size);
-        if (blobList.Count == 0) {
-            blobList.Add(blob);
-            return blob;
-        }
-        for (int i = 0; i < blobList.Count; i++) {
-            if (blobList[i].GlobalIndex > index) continue;
-            if (blobList[i].GlobalIndex + blobList[i].GlobalSize > index) 
-                throw new InvalidOperationException("Overlapping blobs!");
-            // TODO: Better error reporting through metadata
-            blobList.Insert(i+1, blob); // Insert it right after
+        // if (blobList.Count == 0) {
+            // blobList.Add(blob);
+            // return blob;
+        // }
+        int i = 0;
+        for (i = 0; i < blobList.Count; i++) {
+            if (blobList[i].GlobalIndex + blobList[i].GlobalSize <= index) continue;
             break;
         }
+        if (i != blobList.Count && blobList[i].GlobalIndex <= index) {
+            throw new InvalidOperationException("Overlapping blobs!");
+        }
+        blobList.Insert(i, blob);
+        // if (blobList[i].GlobalIndex > index) continue;
+        //     if (blobList[i].GlobalIndex + blobList[i].GlobalSize > index) 
+        //         throw new InvalidOperationException("Overlapping blobs!");
+        //     // TODO: Better error reporting through metadata
+        //     blobList.Insert(i+1, blob); // Insert it right after
+        //     break;
+        // }
         return blob;
     }
 
@@ -168,7 +177,7 @@ public class PatchableMethodDefinition : IMemberDefinition, IMethodSignature, IG
         if (isApplied) throw new InvalidOperationException("Patchable method has been already applied!");
     }
 
-    public struct Blob {
+    private struct Blob {
         public readonly Collection<Instruction> BlobInstructions;
         public readonly int GlobalIndex;
         public readonly int GlobalSize;

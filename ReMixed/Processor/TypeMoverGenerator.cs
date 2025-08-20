@@ -8,14 +8,17 @@ namespace ReMixed.Processor;
 
 public class TypeMoverGenerator : IGenerator<TypeDefinition, Collection<TypeDefinition>> {
     private readonly RelinkerConfig relinkerConfig;
+    private readonly PatchPlatform platform;
     private readonly string prefixId;
 
     private TypeMoverGenerator(
         string id,
-        RelinkerConfig rconfig
+        RelinkerConfig rconfig,
+        PatchPlatform pPlatform
         ) {
         prefixId = id;
         relinkerConfig = rconfig;
+        platform = pPlatform;
     }
 
     public sealed class Factory : IGeneratorFactory<TypeDefinition, Collection<TypeDefinition>> {
@@ -40,7 +43,7 @@ public class TypeMoverGenerator : IGenerator<TypeDefinition, Collection<TypeDefi
             return true;
         }
         public IGenerator<TypeDefinition, Collection<TypeDefinition>> For(TypeDefinition target, Collection<TypeDefinition> dest) {
-            return new TypeMoverGenerator(prefixId, relinkerConfig);
+            return new TypeMoverGenerator(prefixId, relinkerConfig, platform);
         }
     }
 
@@ -51,7 +54,7 @@ public class TypeMoverGenerator : IGenerator<TypeDefinition, Collection<TypeDefi
             newType.Name = "Dup_" + newType.Name;
         }
         container.Add(newType);
-        MixinMergerTransformer mmTransformer = new(prefixId, relinkerConfig);
+        MixinMergerTransformer mmTransformer = new(prefixId, relinkerConfig, platform);
         mmTransformer.Perform(target, newType);
     }
 }

@@ -39,7 +39,7 @@ public abstract class PatchPlatform : IDisposable {
         
         InjectorRegistry.Register(InjectorIds.CIInjectorNonCancellable, CIInjector.FactoryNonCancellable);
         InjectorRegistry.Register(InjectorIds.CIInjectorCancellable, CIInjector.FactoryCancellable);
-        InjectorRegistry.Register(InjectorIds.InstanceInjector, InstanceInjector.Factory);
+        InjectorRegistry.Register(InjectorIds.InstanceInjector, SimpleInstanceInjector.Factory);
         
         Positioners.Register(InjectorRegistry);
     }

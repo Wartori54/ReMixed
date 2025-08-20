@@ -501,11 +501,8 @@ public static class Extensions {
     }
 
     public static MethodReference AttachToGIT(this MethodReference reference, GenericInstanceType gi) {
-        return new MethodReference(reference.Name, reference.ReturnType, gi) {
-            HasThis = reference.HasThis,
-            ExplicitThis = reference.ExplicitThis,
-            CallingConvention = MethodCallingConvention.Generic
-        };
+        // There is no way attaching a GIT is this nasty, find a way to do this better
+        return reference.CloneAndAttachDeclType(MemberCloner.Clone);
     }
 
     public static string? GetCecilFullName(this Type type) {
@@ -533,9 +530,32 @@ public static class Extensions {
         Type? attrType = Type.GetType(attr.AttributeType.GetReflectionFullName());
         if (attrType == null) return null;
         object[] ctorParams = attr.ConstructorArguments.Select(arg => {
+            if (arg.Value is CustomAttributeArgument[] argArray) {
+                return GetArray(argArray);
+            }
             if (arg.Value is not TypeDefinition tDef) return arg.Value;
             // Special case tDefs since it's the only possible ctor arg type that differs from the actual element in runtime (TypeDefiniton vs Type)
             return Type.GetType(tDef.GetReflectionFullName()) ?? throw new Exception($"Could not reflect type {tDef.FullName}!");
+
+            static object GetArray(CustomAttributeArgument[] argArray) {
+                Type? currType = null;
+                object[] r = argArray.Select(a => {
+                    if (a.Value is CustomAttributeArgument[] innerArgArray) {
+                        return GetArray(innerArgArray);
+                    }
+                    if (a.Value is not TypeDefinition tDef) {
+                        currType ??= a.Value.GetType();
+                        return a.Value;
+                    }
+                    currType ??= typeof(Type);
+                    return Type.GetType(tDef.GetReflectionFullName()) ?? throw new Exception($"Could not reflect type {tDef.FullName}!");       
+                }).ToArray();
+                if (currType == null) return Array.Empty<object>(); // TODO: This is not robust enough
+                Type currArrType = currType.MakeArrayType();
+                object rArray = Activator.CreateInstance(currArrType, r.Length)!;
+                Array.Copy(r, (Array)rArray, r.Length);
+                return rArray;
+            }
         }).ToArray();
         object? attrObj = Activator.CreateInstance(attrType, ctorParams);
         if (attrObj == null) return null;
@@ -568,5 +588,13 @@ public static class Extensions {
         return newInstr;
     }
     
-    
+    public static string FindOrigName(this ICustomAttributeProvider cap) {
+        foreach (CustomAttribute customAttribute in cap.CustomAttributes) {
+            if (customAttribute.AttributeType.FullName != typeof(MergedAttribute).FullName) continue;
+            if (customAttribute.ConstructorArguments.Count != 1) throw new InvalidOperationException("Invalid merged attribute constructor");
+            if (customAttribute.ConstructorArguments[0].Value is not string origName) throw new InvalidOperationException("Invalid merged attribute constructor");
+            return origName;
+        }
+        throw new InvalidOperationException("Tried to obtain original name of non-merged member!");
+    }
 }

@@ -37,11 +37,13 @@ public class MethodMPATransformer : ITransformer<MethodDefinition, MethodDefinit
         public IEnumerable<MethodDefinition> AppliesTo(MethodDefinition methodDef, Collection<MethodDefinition> targets) {
             // Parse the attrs
             List<MethodPositionedAttribute> foundAttributes = [];
+            List<CustomAttribute> origAttributes = [];
             foreach (CustomAttribute customAttribute in methodDef.CustomAttributes) {
                 if (InBaseTypeTree(customAttribute.AttributeType, platform.ThisCecilDefs.GetReflection(typeof(MethodPositionedAttribute)))) {
                     MethodPositionedAttribute methodPositionedAttribute = customAttribute.Instantiate() as MethodPositionedAttribute 
                                                                           ?? throw new Exception($"Couldn't instantiate {nameof(MethodPositionedAttribute)} for attr {customAttribute.AttributeType.FullName} for method {methodDef.FullName}");
                     foundAttributes.Add(methodPositionedAttribute);
+                    origAttributes.Add(customAttribute);
                 }
             }
             
@@ -53,9 +55,13 @@ public class MethodMPATransformer : ITransformer<MethodDefinition, MethodDefinit
             
             if (foundAttributes.Count != 1) throw new NotImplementedException();
 
-            MethodPositionedAttribute mpaAttr = foundAttributes[0];
+            const int index = 0;
+            MethodPositionedAttribute mpaAttr = foundAttributes[index];
+            methodDef.CustomAttributes.Remove(origAttributes[index]); // Consume the attribute
+            // TODO: Overloading support
+            string methodTarget = mpaAttr.MethodTarget ?? methodDef.FindOrigName();
             foreach (MethodDefinition? t in targets) {
-                if (t.Name == mpaAttr.MethodTarget || (mpaAttr.MethodTarget.Contains('.') && t.FullName == foundAttributes[0].MethodTarget)) {
+                if (t.Name == methodTarget || (methodTarget.Contains('.') && t.FullName == methodTarget)) {
                     yield return t;
                 }
             }
@@ -87,15 +93,15 @@ public class MethodMPATransformer : ITransformer<MethodDefinition, MethodDefinit
             foreach (string atId in currentAttribute.At) {
                 if (atId == "") throw new InvalidOperationException("Empty At given!");
                 Injector.InjectorRegistry.PositionerAction pAction = context.Platform.InjectorRegistry.GetPositioner(atId);
-                pAction(positioner);
-                
-                MethodPatchContext.Positioner positionerEnd = injector.GetRentSize(positioner.Clone());
-                MethodPatchContext.Cursor c = patchableMethodDef.AcquireCursorFromBlob(positioner, positionerEnd);
-                
-                injector.Inject(c, patchableMethodDef, memberDefSource);
+                pAction(positioner); // Always do it once
+                do {
+                    MethodPatchContext.Positioner positionerEnd = injector.GetRentSize(positioner.Clone());
+                    MethodPatchContext.Cursor c = patchableMethodDef.AcquireCursorFromBlob(positioner, positionerEnd);
+
+                    injector.Inject(c, patchableMethodDef, memberDefSource);
+                } while (pAction(positioner));
             }
         // }
-
 
         // patchableMethodDef.Apply();
     }

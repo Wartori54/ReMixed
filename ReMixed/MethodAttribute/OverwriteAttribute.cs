@@ -1,5 +1,9 @@
 namespace ReMixed.MethodAttribute;
 
-public class OverwriteAttribute(string methodTarget) : MethodPositionedAttribute(methodTarget, ["HEAD"]) {
-    
+public class OverwriteAttribute : MethodPositionedAttribute {
+    public OverwriteAttribute() : base(null, ["HEAD"]) {
+    }
+    public OverwriteAttribute(string methodTarget) : base(methodTarget, ["HEAD"]) {
+    }
+
 }

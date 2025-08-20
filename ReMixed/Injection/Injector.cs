@@ -1,10 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Mono.Cecil;
 using ReMixed.MethodAttribute;
-using ReMixed.Positioning;
-using ReMixed.Registry;
 
 namespace ReMixed.Injection;
 
@@ -31,7 +28,7 @@ public abstract class Injector {
         public delegate Injector InjectorFactory(MethodPatchContext context);
         public delegate Injector AttributeInjectorFactory(MethodPositionedAttribute attribute, MethodPatchContext context);
         
-        public delegate void PositionerAction(MethodPatchContext.Positioner positioner);
+        public delegate bool PositionerAction(MethodPatchContext.Positioner positioner);
 
         private readonly Dictionary<string, InjectorFactory> registeredIds = new();
 

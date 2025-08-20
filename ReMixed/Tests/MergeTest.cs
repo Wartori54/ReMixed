@@ -26,6 +26,21 @@ public class OrigClass {
     public void TestMethod() {
         Console.WriteLine("TestMethod");
     }
+
+    public int TestMethodInjection(int arg1, bool arg2) {
+        Console.WriteLine("TestMethodInjection" + arg2);
+        int doStuff = 0;
+        for (int i = 0; i < 10; i++) {
+            doStuff += arg1;
+        }
+        doStuff--;
+        if (doStuff == 10) {
+            return 3;
+        }
+        Console.WriteLine("DoStuff: " + doStuff);
+        Console.WriteLine("Stuff Done!");
+        return 2;
+    }
 }
 
 [Mixin(typeof(OrigClass))]
@@ -65,9 +80,26 @@ public class MixinClass {
         Console.WriteLine(((OrigClass) (object)this).Field1);
     }
 
-    [Overwrite("TestMethod")]
-    public void TestOverwrite() {
-        Console.WriteLine("TestOvewrite");
+    [Overwrite]
+    public void TestMethod() {
+        Console.WriteLine("TestOverwrite");
+    }
+
+    [Inject("TestMethodInjection", ["HEAD"])]
+    public void TestMethodInjectionNoArgs(ILPatcher.CallbackInfoRet<int> ci) {
+        Console.WriteLine("TestMethodInjection no args!");
+    }
+    
+    [Inject("TestMethodInjection", ["HEAD"])]
+    public void TestMethodInjectionArgs(ILPatcher.CallbackInfoRet<int> ci, int arg1, bool arg2) {
+        Console.WriteLine("TestMethodInjection with args!");
+        Console.WriteLine(arg1);
+        Console.WriteLine(arg2);
+    }
+
+    [Inject("TestMethodInjection", ["TAIL"])]
+    public static void TestMethodInjectionStaticTail(ILPatcher.CallbackInfoRet<int> ci, int arg1, bool arg2) {
+        Console.WriteLine("TestMethodInjectionStaticTail with args!");
     }
 }
 
