@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using Mono.Cecil;
 using ReMixed.MethodAttribute;
 using ReMixed.PlatformImpls;
@@ -11,6 +12,11 @@ public class MergeTest {
         CecilPlatform platform = new();
         MixinApply.MixinMergeAndRelink(platform, asm.MainModule);
         asm.Write(typeof(MergeTest).Assembly.Location + ".relink");
+        Assembly outAsm = Assembly.LoadFile(typeof(MergeTest).Assembly.Location + ".relink");
+        Type outType = outAsm.GetType("ReMixed.Tests.OrigClass")!;
+        object o = Activator.CreateInstance(outType)!;
+        outType.GetMethod("TestMethod")!.Invoke(o, []);
+        outType.GetMethod("TestMethodInjection")!.Invoke(o, [2, true]);
     }
 }
 
@@ -28,19 +34,28 @@ public class OrigClass {
     }
 
     public int TestMethodInjection(int arg1, bool arg2) {
-        Console.WriteLine("TestMethodInjection" + arg2);
+        Console.WriteLine("TestMethodInjection " + arg2);
         int doStuff = 0;
         for (int i = 0; i < 10; i++) {
             doStuff += arg1;
         }
-        doStuff--;
+        Console.WriteLine("Stuff done!");
+        TestCall();
         if (doStuff == 10) {
+            Console.WriteLine("Other return!");
             return 3;
         }
+        TestCall2();
         Console.WriteLine("DoStuff: " + doStuff);
         Console.WriteLine("Stuff Done!");
         return 2;
     }
+
+    public void TestCall() {
+        
+    }
+    
+    public void TestCall2() {}
 }
 
 [Mixin(typeof(OrigClass))]
@@ -100,6 +115,16 @@ public class MixinClass {
     [Inject("TestMethodInjection", ["TAIL"])]
     public static void TestMethodInjectionStaticTail(ILPatcher.CallbackInfoRet<int> ci, int arg1, bool arg2) {
         Console.WriteLine("TestMethodInjectionStaticTail with args!");
+    }
+    
+    [Inject("TestMethodInjection", ["RETURN"])]
+    public static void TestMethodInjectionStaticReturn(ILPatcher.CallbackInfoRet<int> ci, int arg1, bool arg2) {
+        Console.WriteLine("TestMethodInjectionStaticReturn with args! " + arg1);
+    }
+
+    [Inject("TestMethodInjection", ["CALL:1", "CALL:2"]), AtPos("1", "System.Void ReMixed.Tests.OrigClass::TestCall()"), AtPos("2", "System.Void ReMixed.Tests.OrigClass::TestCall2()")]
+    public void TestMethodInjectionCall(ILPatcher.CallbackInfoRet<int> ci, int arg1, bool arg2) {
+        Console.WriteLine("TestMethodInjectionCall with args! " + arg1);
     }
 }
 

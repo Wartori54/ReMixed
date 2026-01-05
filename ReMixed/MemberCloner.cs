@@ -320,6 +320,8 @@ public static class MemberCloner {
             return gimCopy;
         }
         MethodReference copy = new(source.Name, source.ReturnType) {
+            HasThis = source.HasThis,
+            ExplicitThis = source.ExplicitThis,
             MethodReturnType = source.MethodReturnType,
             CallingConvention = source.CallingConvention,
         };

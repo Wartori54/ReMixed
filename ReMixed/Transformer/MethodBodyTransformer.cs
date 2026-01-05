@@ -92,18 +92,39 @@ public class MethodMPATransformer : ITransformer<MethodDefinition, MethodDefinit
 
             foreach (string atId in currentAttribute.At) {
                 if (atId == "") throw new InvalidOperationException("Empty At given!");
-                Injector.InjectorRegistry.PositionerAction pAction = context.Platform.InjectorRegistry.GetPositioner(atId);
-                pAction(positioner); // Always do it once
+                (Injector.InjectorRegistry.PositionerAction pAction, AtPosAttribute? atPosAttr) = ParseAtId(atId, memberDefSource.CustomAttributes);
+                int itr = 0;
+                bool success = pAction(positioner, atPosAttr, itr); // Always do it once
+                if (!success) throw new InvalidOperationException($"Failed to match target positioner with id {atId}");
+                itr++;
                 do {
                     MethodPatchContext.Positioner positionerEnd = injector.GetRentSize(positioner.Clone());
                     MethodPatchContext.Cursor c = patchableMethodDef.AcquireCursorFromBlob(positioner, positionerEnd);
 
                     injector.Inject(c, patchableMethodDef, memberDefSource);
-                } while (pAction(positioner));
+                } while (pAction(positioner, atPosAttr, itr++));
             }
         // }
 
         // patchableMethodDef.Apply();
+    }
+
+    private (Injector.InjectorRegistry.PositionerAction, AtPosAttribute?) ParseAtId(string atId, Collection<CustomAttribute> allAttrs) {
+        string[] parts = atId.Split(':');
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(parts.Length, 2, "Too many colons in id!");
+        Injector.InjectorRegistry.PositionerAction pAction = context.Platform.InjectorRegistry.GetPositioner(parts[0]);
+        if (parts.Length == 1) return (pAction, null);
+
+        foreach (CustomAttribute customAttribute in allAttrs) {
+            if (ILPatcher.TypeReferenceEqual(customAttribute.AttributeType, context.Platform.ThisCecilDefs.GetReflection(typeof(AtPosAttribute)))) {
+                AtPosAttribute atPosAttribute = customAttribute.Instantiate() as AtPosAttribute 
+                                                                      ?? throw new Exception($"Couldn't instantiate {nameof(AtPosAttribute)} for attr {customAttribute.AttributeType.FullName}");
+                if (atPosAttribute.Id != parts[1]) continue;
+                return (pAction, atPosAttribute);
+            }
+        }
+        
+        throw new InvalidOperationException($"Couldn't find {nameof(AtPosAttribute)} with id: {parts[1]}");
     }
 }
 

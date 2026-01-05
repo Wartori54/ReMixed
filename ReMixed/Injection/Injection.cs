@@ -135,14 +135,23 @@ public class CIInjector : Injector {
         // (ldc.i4.1/0) -- present if ret value is not void; 0 means non-cancellable, 1 means cancellable
         // newobj CallbackInfo/CallbackInfoReturnable -- returnable when ret value is not void
         MethodReference ctor;
-        cursor.EmitLdstr("TODO: Not implemented yet" /* targetSig.Name */); // TODO
+        cursor.EmitLdstr(TryGetNameOfSig(targetSig));
         cursor.EmitLdcI4(cancellable ? 1 : 0);
-        if (targetSig.ReturnType != source.Module.TypeSystem.Void) {
+        if (targetSig.ReturnType.FullName != "System.Void") {
             ctor = Platform.ThisCecilDefs.CIRCtorT(targetSig.ReturnType);
         } else {
             ctor = Platform.ThisCecilDefs.CICtor;
         }
         cursor.EmitNewobj(Context.Method.Module.ImportReference(ctor));
+    }
+
+    // Very ugly, unfortunately the api limits us from getting the name in a easier manner
+    private static string TryGetNameOfSig(IMethodSignature targetSig) {
+        return targetSig switch {
+            PatchableMethodDefinition p => p.Name,
+            MethodReference mr => mr.Name,
+            _ => "ERROR: Could not get name of method"
+        };
     }
 }
 

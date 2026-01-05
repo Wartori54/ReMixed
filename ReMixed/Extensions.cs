@@ -502,7 +502,9 @@ public static class Extensions {
 
     public static MethodReference AttachToGIT(this MethodReference reference, GenericInstanceType gi) {
         // There is no way attaching a GIT is this nasty, find a way to do this better
-        return reference.CloneAndAttachDeclType(MemberCloner.Clone);
+        MethodReference clone = reference.CloneAndAttachDeclType(MemberCloner.Clone);
+        clone.DeclaringType = gi;
+        return clone;
     }
 
     public static string? GetCecilFullName(this Type type) {

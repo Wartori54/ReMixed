@@ -28,7 +28,7 @@ public abstract class Injector {
         public delegate Injector InjectorFactory(MethodPatchContext context);
         public delegate Injector AttributeInjectorFactory(MethodPositionedAttribute attribute, MethodPatchContext context);
         
-        public delegate bool PositionerAction(MethodPatchContext.Positioner positioner);
+        public delegate bool PositionerAction(MethodPatchContext.Positioner positioner, AtPosAttribute? atAttr, int itr);
 
         private readonly Dictionary<string, InjectorFactory> registeredIds = new();
 
